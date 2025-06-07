@@ -33,7 +33,16 @@ CREATE TABLE order_assignments (
   is_active BOOLEAN DEFAULT true
 );
 
--- Order Priority & Complexity
+-- 1. Add missing columns to existing tables
+ALTER TABLE orders ADD COLUMN claimed_by UUID REFERENCES active_sessions(id);
+ALTER TABLE orders ADD COLUMN claimed_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE orders ADD COLUMN auto_priority INTEGER DEFAULT 5;
+ALTER TABLE orders ADD COLUMN prep_time_estimate INTEGER DEFAULT 15;
+
+ALTER TABLE order_items ADD COLUMN started_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE order_items ADD COLUMN completed_at TIMESTAMP WITH TIME ZONE;
+
+-- Order Priority & Complexity (keep existing columns if they exist)
 ALTER TABLE orders ADD COLUMN priority INTEGER DEFAULT 5; -- 1-10 scale
 ALTER TABLE orders ADD COLUMN complexity_score INTEGER DEFAULT 5; -- Auto-calculated
 ALTER TABLE orders ADD COLUMN estimated_time_minutes INTEGER DEFAULT 15;
@@ -43,10 +52,60 @@ ALTER TABLE orders ADD COLUMN assigned_station_id UUID REFERENCES kitchen_statio
 ALTER TABLE menu_items ADD COLUMN preferred_station_id UUID REFERENCES kitchen_stations(id);
 ALTER TABLE menu_items ADD COLUMN preparation_time_minutes INTEGER DEFAULT 10;
 
--- Indexes for Performance
+-- 2. Add performance indexes
+CREATE INDEX idx_orders_status_restaurant ON orders(restaurant_id, status, created_at DESC);
+CREATE INDEX idx_orders_claimed ON orders(claimed_by, status) WHERE claimed_by IS NOT NULL;
+CREATE INDEX idx_order_items_status ON order_items(order_id, item_status);
+CREATE INDEX idx_active_sessions_station ON active_sessions(station_id, status, last_seen);
 CREATE INDEX idx_active_sessions_restaurant ON active_sessions(restaurant_id, status);
-CREATE INDEX idx_order_assignments_active ON order_assignments(order_id, is_active);
 CREATE INDEX idx_orders_priority_status ON orders(restaurant_id, priority DESC, status, created_at);
+
+-- 3. Add order claiming constraints
+ALTER TABLE orders ADD CONSTRAINT orders_claimed_by_fkey 
+  FOREIGN KEY (claimed_by) REFERENCES active_sessions(id) ON DELETE SET NULL;
+
+-- 4. Update RLS policies for new columns
+DROP POLICY IF EXISTS "Public can create orders" ON orders;
+CREATE POLICY "Public can create orders" ON orders 
+  FOR INSERT WITH CHECK (claimed_by IS NULL);
+
+-- 5. Add function for atomic order claiming
+CREATE OR REPLACE FUNCTION claim_order(order_uuid UUID, session_uuid UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+  success BOOLEAN := FALSE;
+BEGIN
+  UPDATE orders 
+  SET claimed_by = session_uuid, 
+      claimed_at = NOW(),
+      status = 'preparing'
+  WHERE id = order_uuid 
+    AND claimed_by IS NULL 
+    AND status = 'pending';
+  
+  GET DIAGNOSTICS success = FOUND;
+  RETURN success;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 6. Add function for releasing order claims
+CREATE OR REPLACE FUNCTION release_order(order_uuid UUID, session_uuid UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+  success BOOLEAN := FALSE;
+BEGIN
+  UPDATE orders 
+  SET claimed_by = NULL, 
+      claimed_at = NULL,
+      status = 'pending'
+  WHERE id = order_uuid 
+    AND claimed_by = session_uuid
+    AND status IN ('preparing', 'ready');
+  
+  GET DIAGNOSTICS success = FOUND;
+  RETURN success;
+END;
+$$ LANGUAGE plpgsql;
 
 -- Real-time Functions for Instant Updates
 CREATE OR REPLACE FUNCTION notify_order_change()
@@ -61,6 +120,7 @@ BEGIN
         'order_id', NEW.id,
         'status', NEW.status,
         'priority', NEW.priority,
+        'claimed_by', NEW.claimed_by,
         'table_number', (SELECT table_number FROM restaurant_tables WHERE id = NEW.table_id),
         'estimated_time', NEW.estimated_time_minutes
       )::text
@@ -70,7 +130,12 @@ BEGIN
   -- Notify general restaurant channel
   PERFORM pg_notify(
     'restaurant_' || NEW.restaurant_id::text,
-    json_build_object('type', 'order_update', 'order_id', NEW.id)::text
+    json_build_object(
+      'type', 'order_update', 
+      'order_id', NEW.id,
+      'status', NEW.status,
+      'claimed_by', NEW.claimed_by
+    )::text
   );
   
   RETURN NEW;

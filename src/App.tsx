@@ -7,8 +7,6 @@ import { SignUp } from './pages/auth/SignUp';
 import { ForgotPassword } from './pages/auth/ForgotPassword';
 import { Dashboard } from './pages/dashboard/Dashboard';
 import { Kitchen } from './pages/kitchen/Kitchen';
-import { KitchenStations } from './pages/kitchen/KitchenStations';
-import { KitchenStation } from './pages/kitchen/KitchenStation';
 import { CustomerOrder } from './pages/order/CustomerOrder';
 import { OrderSuccess } from './pages/order/OrderSuccess';
 import { OrderError } from './pages/order/OrderError';
@@ -94,24 +92,6 @@ function App() {
           
           <Route 
             path="/kitchen" 
-            element={
-              <ProtectedRoute>
-                <KitchenStations />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="/kitchen/station/:stationId" 
-            element={
-              <ProtectedRoute>
-                <KitchenStation />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="/kitchen/legacy" 
             element={
               <ProtectedRoute>
                 <Kitchen />

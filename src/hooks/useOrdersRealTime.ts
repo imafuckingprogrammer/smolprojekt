@@ -9,7 +9,9 @@ export function useOrdersRealTime() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
+  // Fixed fetchOrders with stable dependencies
   const fetchOrders = useCallback(async () => {
     if (!restaurant) return;
 
@@ -22,9 +24,11 @@ export function useOrdersRealTime() {
             *,
             menu_item:menu_items(*)
           ),
-          restaurant_table:restaurant_tables(*)
+          restaurant_table:restaurant_tables(*),
+          claimed_session:active_sessions(user_name)
         `)
         .eq('restaurant_id', restaurant.id)
+        .in('status', ['pending', 'preparing', 'ready'])
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -39,19 +43,20 @@ export function useOrdersRealTime() {
     } finally {
       setLoading(false);
     }
-  }, [restaurant]);
+  }, [restaurant]); // ONLY restaurant dependency
 
-  // Initial load
+  // Initial load - FIXED: Only depends on restaurant, NOT fetchOrders
   useEffect(() => {
     fetchOrders();
-  }, [fetchOrders]);
+  }, [restaurant]);
 
-  // Real-time subscription
+  // Real-time subscription - FIXED: Unique channel names, proper cleanup
   useEffect(() => {
     if (!restaurant) return;
 
     console.log('🔥 Setting up real-time orders subscription for restaurant:', restaurant.id);
 
+    // Unique channel name with timestamp
     const channel = supabase
       .channel(`orders_realtime_${restaurant.id}_${Date.now()}`)
       .on(
@@ -84,9 +89,70 @@ export function useOrdersRealTime() {
       console.log('🔥 Cleaning up orders subscription');
       supabase.removeChannel(channel);
     };
-  }, [restaurant, fetchOrders]);
+  }, [restaurant]); // ONLY restaurant dependency
 
-  const updateOrderStatus = useCallback(async (orderId: string, status: string) => {
+  // Order claiming functions
+  const claimOrder = useCallback(async (orderId: string): Promise<boolean> => {
+    if (!currentSessionId) {
+      setError('No active session. Please join the kitchen first.');
+      return false;
+    }
+
+    try {
+      console.log('🔥 Claiming order:', { orderId, sessionId: currentSessionId });
+      
+      const { data, error } = await supabase.rpc('claim_order', {
+        order_uuid: orderId,
+        session_uuid: currentSessionId
+      });
+
+      if (error) throw error;
+      
+      if (data) {
+        console.log('✅ Order claimed successfully');
+        return true;
+      } else {
+        setError('Failed to claim order. It may have been claimed by someone else.');
+        return false;
+      }
+    } catch (err) {
+      console.error('❌ Error claiming order:', err);
+      setError(err instanceof Error ? err.message : 'Failed to claim order');
+      return false;
+    }
+  }, [currentSessionId]);
+
+  const releaseOrder = useCallback(async (orderId: string): Promise<boolean> => {
+    if (!currentSessionId) {
+      setError('No active session.');
+      return false;
+    }
+
+    try {
+      console.log('🔥 Releasing order:', { orderId, sessionId: currentSessionId });
+      
+      const { data, error } = await supabase.rpc('release_order', {
+        order_uuid: orderId,
+        session_uuid: currentSessionId
+      });
+
+      if (error) throw error;
+      
+      if (data) {
+        console.log('✅ Order released successfully');
+        return true;
+      } else {
+        setError('Failed to release order.');
+        return false;
+      }
+    } catch (err) {
+      console.error('❌ Error releasing order:', err);
+      setError(err instanceof Error ? err.message : 'Failed to release order');
+      return false;
+    }
+  }, [currentSessionId]);
+
+  const updateOrderStatus = useCallback(async (orderId: string, status: string): Promise<boolean> => {
     try {
       console.log('🔥 Updating order status:', { orderId, status });
       
@@ -101,8 +167,6 @@ export function useOrdersRealTime() {
       if (error) throw error;
       
       console.log('✅ Order status updated successfully');
-      
-      // The real-time subscription will automatically update the UI
       return true;
     } catch (err) {
       console.error('❌ Error updating order status:', err);
@@ -111,12 +175,64 @@ export function useOrdersRealTime() {
     }
   }, []);
 
+  // Session management
+  const createSession = useCallback(async (userName: string): Promise<string | null> => {
+    if (!restaurant) return null;
+
+    try {
+      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      const { error } = await supabase
+        .from('active_sessions')
+        .insert({
+          id: sessionId,
+          restaurant_id: restaurant.id,
+          user_name: userName,
+          session_token: sessionId,
+          status: 'active'
+        });
+
+      if (error) throw error;
+      
+      setCurrentSessionId(sessionId);
+      console.log('✅ Session created:', sessionId);
+      return sessionId;
+    } catch (err) {
+      console.error('❌ Error creating session:', err);
+      setError(err instanceof Error ? err.message : 'Failed to create session');
+      return null;
+    }
+  }, [restaurant]);
+
+  const endSession = useCallback(async (): Promise<void> => {
+    if (!currentSessionId) return;
+
+    try {
+      const { error } = await supabase
+        .from('active_sessions')
+        .delete()
+        .eq('id', currentSessionId);
+
+      if (error) throw error;
+      
+      setCurrentSessionId(null);
+      console.log('✅ Session ended');
+    } catch (err) {
+      console.error('❌ Error ending session:', err);
+    }
+  }, [currentSessionId]);
+
   return {
     orders,
     loading,
     error,
     lastUpdate,
+    currentSessionId,
     updateOrderStatus,
+    claimOrder,
+    releaseOrder,
+    createSession,
+    endSession,
     refetch: fetchOrders
   };
 } 

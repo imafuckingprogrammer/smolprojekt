@@ -31,6 +31,11 @@ export interface Database {
         Insert: Omit<OrderItem, 'id' | 'created_at' | 'updated_at'>;
         Update: Partial<Omit<OrderItem, 'id' | 'created_at' | 'updated_at'>>;
       };
+      active_sessions: {
+        Row: ActiveSession;
+        Insert: Omit<ActiveSession, 'id' | 'created_at'>;
+        Update: Partial<Omit<ActiveSession, 'id' | 'created_at'>>;
+      };
       monthly_analytics: {
         Row: MonthlyAnalytics;
         Insert: Omit<MonthlyAnalytics, 'id' | 'created_at'>;
@@ -101,6 +106,10 @@ export interface Order {
   complexity_score?: number;
   estimated_time_minutes?: number;
   assigned_station_id?: string;
+  claimed_by?: string;
+  claimed_at?: string;
+  auto_priority?: number;
+  prep_time_estimate?: number;
   created_at: string;
   updated_at: string;
 }
@@ -111,9 +120,12 @@ export interface OrderItem {
   menu_item_id: string;
   quantity: number;
   unit_price: number;
+  price: number; // Alias for unit_price for compatibility
   special_instructions?: string;
   item_status: 'pending' | 'preparing' | 'ready';
   assigned_chef?: string;
+  started_at?: string;
+  completed_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -133,12 +145,25 @@ export interface MonthlyAnalytics {
   created_at: string;
 }
 
+export interface ActiveSession {
+  id: string;
+  user_id?: string;
+  restaurant_id: string;
+  station_id?: string;
+  session_token: string;
+  user_name?: string;
+  status: 'active' | 'busy' | 'break' | 'offline';
+  last_seen: string;
+  created_at: string;
+}
+
 // Extended types for joins
 export interface OrderWithItems extends Order {
   order_items: (OrderItem & {
     menu_item: MenuItem;
   })[];
   restaurant_table: RestaurantTable;
+  claimed_session?: ActiveSession;
 }
 
 export interface MenuItemWithCategory extends MenuItem {

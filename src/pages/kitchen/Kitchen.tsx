@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useOrdersRealTime } from '../../hooks/useOrdersRealTime';
-import { supabase } from '../../lib/supabase';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { formatCurrency, getOrderAge, getOrderAgeColor } from '../../lib/utils';
 import type { OrderWithItems } from '../../types/database';
@@ -9,81 +8,68 @@ import {
   ClockIcon,
   MapPinIcon,
   UserIcon,
-  ChatBubbleLeftRightIcon,
+  PlayIcon,
   CheckCircleIcon,
   XCircleIcon,
-  PlayIcon,
-  ArrowPathIcon
+  HandRaisedIcon,
+  HandThumbUpIcon,
+  SpeakerWaveIcon,
+  SpeakerXMarkIcon,
+  ArrowPathIcon,
+  UsersIcon
 } from '@heroicons/react/24/outline';
 
 export function Kitchen() {
-  const { restaurant } = useAuth();
-  const { orders, loading, updateOrderStatus, refetch: fetchOrders } = useOrdersRealTime();
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+  const { restaurant, user } = useAuth();
+  const { 
+    orders, 
+    loading, 
+    error,
+    currentSessionId,
+    updateOrderStatus, 
+    claimOrder, 
+    releaseOrder,
+    createSession,
+    endSession,
+    refetch 
+  } = useOrdersRealTime();
+  
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [userName, setUserName] = useState('');
+  const [showJoinModal, setShowJoinModal] = useState(false);
   const [lastOrderCount, setLastOrderCount] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
 
+  // Show join modal if no active session
   useEffect(() => {
-    if (restaurant) {
-      fetchOrders();
+    if (!currentSessionId && restaurant) {
+      setShowJoinModal(true);
     }
-  }, [restaurant]); // Removed fetchOrders to prevent infinite loops
+  }, [currentSessionId, restaurant]);
 
-  // Set up real-time subscription and auto-refresh
+  // Heartbeat to maintain session
   useEffect(() => {
-    if (!restaurant) return;
+    if (!currentSessionId) return;
 
-    let subscription: any = null;
-
-    // Set up real-time subscription for new orders
-    const setupRealtimeSubscription = () => {
-      subscription = supabase
-        .channel(`orders_${restaurant.id}_${Date.now()}`) // Unique channel name
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'orders',
-            filter: `restaurant_id=eq.${restaurant.id}`
-          },
-          (payload) => {
-            console.log('🔥 REAL-TIME Order update received:', payload);
-            fetchOrders();
-            
-            // Play sound for new orders
-            if (payload.eventType === 'INSERT' && soundEnabled) {
-              playNotificationSound();
-            }
-          }
-        )
-        .subscribe((status) => {
-          console.log('🔥 REAL-TIME Subscription status:', status);
+    const heartbeat = setInterval(async () => {
+      try {
+        // Update last_seen timestamp to keep session alive
+        await fetch('/api/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: currentSessionId })
         });
-    };
-
-    setupRealtimeSubscription();
-
-    // Set up auto-refresh
-    if (autoRefresh) {
-      const interval = setInterval(() => {
-        fetchOrders();
-      }, 30000); // Refresh every 30 seconds
-      setRefreshInterval(interval);
-    }
-
-    return () => {
-      if (subscription) {
-        supabase.removeChannel(subscription);
+        setConnectionStatus('connected');
+      } catch (error) {
+        console.error('Heartbeat failed:', error);
+        setConnectionStatus('disconnected');
       }
-      if (refreshInterval) {
-        clearInterval(refreshInterval);
-      }
-    };
-  }, [restaurant, autoRefresh, soundEnabled, fetchOrders]);
+    }, 30000); // Every 30 seconds
 
-  // Check for new orders and play sound
+    return () => clearInterval(heartbeat);
+  }, [currentSessionId]);
+
+  // Sound notification for new orders
   useEffect(() => {
     const pendingOrders = orders.filter(order => order.status === 'pending').length;
     if (pendingOrders > lastOrderCount && lastOrderCount > 0 && soundEnabled) {
@@ -92,98 +78,185 @@ export function Kitchen() {
     setLastOrderCount(pendingOrders);
   }, [orders, lastOrderCount, soundEnabled]);
 
-  const playNotificationSound = () => {
-    // Create a simple beep sound
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.value = 800;
-    oscillator.type = 'sine';
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.5);
-  };
+  // Cleanup session on unmount
+  useEffect(() => {
+    return () => {
+      if (currentSessionId) {
+        endSession();
+      }
+    };
+  }, [currentSessionId, endSession]);
 
-  const handleStatusUpdate = async (orderId: string, newStatus: any) => {
+  const playNotificationSound = () => {
     try {
-      await updateOrderStatus(orderId, newStatus);
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
     } catch (error) {
-      console.error('Error updating order status:', error);
+      console.error('Failed to play notification sound:', error);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'pending': return 'bg-yellow-100 border-yellow-300';
-      case 'preparing': return 'bg-blue-100 border-blue-300';
-      case 'ready': return 'bg-green-100 border-green-300';
-      case 'served': return 'bg-gray-100 border-gray-300';
-      default: return 'bg-red-100 border-red-300';
+  const handleJoinKitchen = async () => {
+    if (!userName.trim()) return;
+    
+    const sessionId = await createSession(userName.trim());
+    if (sessionId) {
+      setShowJoinModal(false);
+      setConnectionStatus('connected');
+    }
+  };
+
+  const handleClaimOrder = async (orderId: string) => {
+    const success = await claimOrder(orderId);
+    if (success) {
+      playNotificationSound();
+    }
+  };
+
+  const handleReleaseOrder = async (orderId: string) => {
+    await releaseOrder(orderId);
+  };
+
+  const handleStatusUpdate = async (orderId: string, newStatus: string) => {
+    const success = await updateOrderStatus(orderId, newStatus);
+    if (success && newStatus === 'ready') {
+      playNotificationSound();
+    }
+  };
+
+  const getOrderStatusColor = (order: OrderWithItems) => {
+    const age = getOrderAge(order.created_at);
+    
+    // Old orders get red border
+    if (age > 15) return 'border-red-400 bg-red-50';
+    
+    // Check if claimed by current user
+    if (order.claimed_by === currentSessionId) {
+      switch (order.status) {
+        case 'preparing': return 'border-blue-400 bg-blue-50';
+        case 'ready': return 'border-green-400 bg-green-50';
+        default: return 'border-gray-300 bg-white';
+      }
+    }
+    
+    // Check if claimed by someone else
+    if (order.claimed_by && order.claimed_by !== currentSessionId) {
+      return 'border-orange-400 bg-orange-50';
+    }
+    
+    // Unclaimed orders
+    switch (order.status) {
+      case 'pending': return 'border-yellow-400 bg-yellow-50';
+      case 'ready': return 'border-green-400 bg-green-50';
+      default: return 'border-gray-300 bg-white';
     }
   };
 
   const getActionButtons = (order: OrderWithItems) => {
+    const isClaimedByMe = order.claimed_by === currentSessionId;
+    const isClaimedByOther = order.claimed_by && order.claimed_by !== currentSessionId;
+    
     switch (order.status) {
       case 'pending':
-        return (
-          <div className="flex space-x-2">
-            <button
-              onClick={() => handleStatusUpdate(order.id, 'preparing')}
-              className="btn-primary text-sm flex items-center"
-            >
-              <PlayIcon className="h-4 w-4 mr-1" />
-              Start Preparing
-            </button>
-            <button
-              onClick={() => handleStatusUpdate(order.id, 'cancelled')}
-              className="btn-danger text-sm flex items-center"
-            >
-              <XCircleIcon className="h-4 w-4 mr-1" />
-              Cancel
-            </button>
-          </div>
-        );
+        if (!order.claimed_by) {
+          return (
+            <div className="flex space-x-2">
+              <button
+                onClick={() => handleClaimOrder(order.id)}
+                className="btn-primary text-sm flex items-center"
+                disabled={!currentSessionId}
+              >
+                <HandRaisedIcon className="h-4 w-4 mr-1" />
+                Claim Order
+              </button>
+            </div>
+          );
+        } else if (isClaimedByMe) {
+          return (
+            <div className="flex space-x-2">
+              <button
+                onClick={() => handleStatusUpdate(order.id, 'preparing')}
+                className="btn-success text-sm flex items-center"
+              >
+                <PlayIcon className="h-4 w-4 mr-1" />
+                Start Preparing
+              </button>
+              <button
+                onClick={() => handleReleaseOrder(order.id)}
+                className="btn-secondary text-sm flex items-center"
+              >
+                <XCircleIcon className="h-4 w-4 mr-1" />
+                Release
+              </button>
+            </div>
+          );
+        }
+        break;
+        
       case 'preparing':
-        return (
-          <div className="flex space-x-2">
-            <button
-              onClick={() => handleStatusUpdate(order.id, 'ready')}
-              className="btn-success text-sm flex items-center"
-            >
-              <CheckCircleIcon className="h-4 w-4 mr-1" />
-              Mark Ready
-            </button>
-            <button
-              onClick={() => handleStatusUpdate(order.id, 'cancelled')}
-              className="btn-danger text-sm flex items-center"
-            >
-              <XCircleIcon className="h-4 w-4 mr-1" />
-              Cancel
-            </button>
-          </div>
-        );
+        if (isClaimedByMe) {
+          return (
+            <div className="flex space-x-2">
+              <button
+                onClick={() => handleStatusUpdate(order.id, 'ready')}
+                className="btn-success text-sm flex items-center"
+              >
+                <CheckCircleIcon className="h-4 w-4 mr-1" />
+                Mark Ready
+              </button>
+              <button
+                onClick={() => handleReleaseOrder(order.id)}
+                className="btn-secondary text-sm flex items-center"
+              >
+                <XCircleIcon className="h-4 w-4 mr-1" />
+                Release
+              </button>
+            </div>
+          );
+        }
+        break;
+        
       case 'ready':
         return (
           <button
             onClick={() => handleStatusUpdate(order.id, 'served')}
             className="btn-success text-sm flex items-center"
           >
-            <CheckCircleIcon className="h-4 w-4 mr-1" />
+            <HandThumbUpIcon className="h-4 w-4 mr-1" />
             Mark Served
           </button>
         );
-      default:
-        return null;
     }
+    
+    return null;
   };
 
-  // Filter orders to show only active ones
+  const getClaimerInfo = (order: OrderWithItems) => {
+    if (!order.claimed_by) return null;
+    
+    const claimerName = (order as any).claimed_session?.user_name || 'Unknown';
+    const isMe = order.claimed_by === currentSessionId;
+    
+    return (
+      <div className={`text-xs px-2 py-1 rounded ${isMe ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'}`}>
+        {isMe ? 'Claimed by you' : `Claimed by ${claimerName}`}
+      </div>
+    );
+  };
+
+  // Filter and group orders
   const activeOrders = orders.filter(order => 
     ['pending', 'preparing', 'ready'].includes(order.status)
   );
@@ -202,195 +275,247 @@ export function Kitchen() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Kitchen Display</h1>
-              <p className="text-sm text-gray-600">
-                {restaurant?.name} • {activeOrders.length} active orders
-              </p>
-            </div>
-            
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={soundEnabled}
-                    onChange={(e) => setSoundEnabled(e.target.checked)}
-                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Sound</span>
-                </label>
-              </div>
-              
-              <div className="flex items-center">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={autoRefresh}
-                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Auto-refresh</span>
-                </label>
-              </div>
-              
+      {/* Join Kitchen Modal */}
+      {showJoinModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
+            <h2 className="text-xl font-semibold mb-4">Join Kitchen</h2>
+            <p className="text-gray-600 mb-4">
+              Enter your name to join the kitchen and start receiving orders.
+            </p>
+            <input
+              type="text"
+              value={userName}
+              onChange={(e) => setUserName(e.target.value)}
+              placeholder="Your name..."
+              className="w-full p-3 border border-gray-300 rounded-lg mb-4"
+              onKeyPress={(e) => e.key === 'Enter' && handleJoinKitchen()}
+            />
+            <div className="flex space-x-3">
               <button
-                onClick={() => restaurant && fetchOrders()}
-                className="btn-secondary text-sm flex items-center"
+                onClick={handleJoinKitchen}
+                disabled={!userName.trim()}
+                className="flex-1 btn-primary"
               >
-                <ArrowPathIcon className="h-4 w-4 mr-1" />
-                Refresh
+                Join Kitchen
               </button>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Status Summary */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <div className="flex items-center">
-              <ClockIcon className="h-6 w-6 text-yellow-600 mr-3" />
-              <div>
-                <p className="text-lg font-semibold text-yellow-900">{pendingOrders.length}</p>
-                <p className="text-sm text-yellow-700">Pending Orders</p>
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center space-x-4">
+              <h1 className="text-2xl font-bold text-gray-900">Kitchen Dashboard</h1>
+              
+              {/* Connection Status */}
+              <div className="flex items-center space-x-2">
+                <div className={`w-2 h-2 rounded-full ${
+                  connectionStatus === 'connected' ? 'bg-green-500' : 
+                  connectionStatus === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'
+                }`} />
+                <span className="text-sm text-gray-600">
+                  {connectionStatus === 'connected' ? 'Connected' : 
+                   connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+                </span>
               </div>
             </div>
-          </div>
-          
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center">
-              <PlayIcon className="h-6 w-6 text-blue-600 mr-3" />
-              <div>
-                <p className="text-lg font-semibold text-blue-900">{preparingOrders.length}</p>
-                <p className="text-sm text-blue-700">Preparing</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="flex items-center">
-              <CheckCircleIcon className="h-6 w-6 text-green-600 mr-3" />
-              <div>
-                <p className="text-lg font-semibold text-green-900">{readyOrders.length}</p>
-                <p className="text-sm text-green-700">Ready for Pickup</p>
-              </div>
+
+            <div className="flex items-center space-x-4">
+              {/* Sound Toggle */}
+              <button
+                onClick={() => setSoundEnabled(!soundEnabled)}
+                className={`p-2 rounded-lg ${soundEnabled ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400'}`}
+              >
+                {soundEnabled ? (
+                  <SpeakerWaveIcon className="h-5 w-5" />
+                ) : (
+                  <SpeakerXMarkIcon className="h-5 w-5" />
+                )}
+              </button>
+
+              {/* Refresh Button */}
+              <button
+                onClick={refetch}
+                className="p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200"
+              >
+                <ArrowPathIcon className="h-5 w-5" />
+              </button>
+
+              {/* User Info */}
+              {currentSessionId && (
+                <div className="flex items-center space-x-2 bg-blue-50 px-3 py-2 rounded-lg">
+                  <UserIcon className="h-4 w-4 text-blue-600" />
+                  <span className="text-sm font-medium text-blue-900">{userName}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
-
-        {/* Orders Grid */}
-        {activeOrders.length === 0 ? (
-          <div className="text-center py-12">
-            <ClockIcon className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No active orders</h3>
-            <p className="mt-1 text-sm text-gray-500">
-              All caught up! New orders will appear here automatically.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-            {activeOrders
-              .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-              .map((order) => {
-                const orderAge = getOrderAge(order.created_at);
-                const ageColorClass = getOrderAgeColor(orderAge);
-                const statusColorClass = getStatusColor(order.status);
-
-                return (
-                  <div
-                    key={order.id}
-                    className={`card border-2 ${statusColorClass} ${ageColorClass}`}
-                  >
-                    {/* Order Header */}
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-lg font-bold text-gray-900">
-                          Order #{order.order_number}
-                        </h3>
-                        <div className="flex items-center space-x-4 mt-1">
-                          <span className={`badge badge-${order.status}`}>
-                            {order.status.toUpperCase()}
-                          </span>
-                          <span className="text-sm text-gray-500 flex items-center">
-                            <ClockIcon className="h-4 w-4 mr-1" />
-                            {orderAge} min ago
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-lg font-semibold text-gray-900">
-                          {formatCurrency(order.total_amount)}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Order Info */}
-                    <div className="space-y-2 mb-4">
-                      <div className="flex items-center text-sm text-gray-600">
-                        <MapPinIcon className="h-4 w-4 mr-2" />
-                        Table {order.restaurant_table?.table_number}
-                      </div>
-                      
-                      {order.customer_name && (
-                        <div className="flex items-center text-sm text-gray-600">
-                          <UserIcon className="h-4 w-4 mr-2" />
-                          {order.customer_name}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Special Instructions */}
-                    {order.special_instructions && (
-                      <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                        <div className="flex items-start">
-                          <ChatBubbleLeftRightIcon className="h-4 w-4 text-yellow-600 mt-0.5 mr-2 flex-shrink-0" />
-                          <div>
-                            <p className="text-sm font-medium text-yellow-800">Special Instructions:</p>
-                            <p className="text-sm text-yellow-700">{order.special_instructions}</p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Order Items */}
-                    <div className="space-y-3 mb-6">
-                      {order.order_items.map((item) => (
-                        <div key={item.id} className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <p className="font-medium text-gray-900">
-                              {item.quantity}x {item.menu_item?.name || 'Unknown Item'}
-                            </p>
-                            {item.special_instructions && (
-                              <div className="mt-1 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                                <p className="text-yellow-800">
-                                  <span className="font-medium">Note:</span> {item.special_instructions}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                          <div className="text-sm text-gray-600 ml-4">
-                            {formatCurrency(item.unit_price * item.quantity)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="border-t border-gray-200 pt-4">
-                      {getActionButtons(order)}
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-        )}
       </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-800">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Orders Grid */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Pending Orders */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Pending Orders ({pendingOrders.length})
+              </h2>
+              <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
+            </div>
+            
+            <div className="space-y-4">
+              {pendingOrders.map((order) => (
+                <OrderCard
+                  key={order.id}
+                  order={order}
+                  statusColor={getOrderStatusColor(order)}
+                  actionButtons={getActionButtons(order)}
+                  claimerInfo={getClaimerInfo(order)}
+                />
+              ))}
+              
+              {pendingOrders.length === 0 && (
+                <p className="text-gray-500 text-center py-8">No pending orders</p>
+              )}
+            </div>
+          </div>
+
+          {/* Preparing Orders */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Preparing ({preparingOrders.length})
+              </h2>
+              <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
+            </div>
+            
+            <div className="space-y-4">
+              {preparingOrders.map((order) => (
+                <OrderCard
+                  key={order.id}
+                  order={order}
+                  statusColor={getOrderStatusColor(order)}
+                  actionButtons={getActionButtons(order)}
+                  claimerInfo={getClaimerInfo(order)}
+                />
+              ))}
+              
+              {preparingOrders.length === 0 && (
+                <p className="text-gray-500 text-center py-8">No orders being prepared</p>
+              )}
+            </div>
+          </div>
+
+          {/* Ready Orders */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Ready ({readyOrders.length})
+              </h2>
+              <div className="w-3 h-3 bg-green-400 rounded-full"></div>
+            </div>
+            
+            <div className="space-y-4">
+              {readyOrders.map((order) => (
+                <OrderCard
+                  key={order.id}
+                  order={order}
+                  statusColor={getOrderStatusColor(order)}
+                  actionButtons={getActionButtons(order)}
+                  claimerInfo={getClaimerInfo(order)}
+                />
+              ))}
+              
+              {readyOrders.length === 0 && (
+                <p className="text-gray-500 text-center py-8">No ready orders</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Order Card Component
+interface OrderCardProps {
+  order: OrderWithItems;
+  statusColor: string;
+  actionButtons: React.ReactNode;
+  claimerInfo: React.ReactNode;
+}
+
+function OrderCard({ order, statusColor, actionButtons, claimerInfo }: OrderCardProps) {
+  const orderAge = getOrderAge(order.created_at);
+  
+  return (
+    <div className={`border-2 rounded-lg p-4 ${statusColor}`}>
+      {/* Order Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center space-x-2">
+          <MapPinIcon className="h-4 w-4 text-gray-500" />
+          <span className="font-medium">
+            Table {order.restaurant_table?.table_number || 'N/A'}
+          </span>
+        </div>
+        
+        <div className="flex items-center space-x-2 text-sm text-gray-500">
+          <ClockIcon className="h-4 w-4" />
+          <span className={getOrderAgeColor(orderAge)}>
+            {orderAge}m ago
+          </span>
+        </div>
+      </div>
+
+      {/* Claimer Info */}
+      {claimerInfo && (
+        <div className="mb-3">
+          {claimerInfo}
+        </div>
+      )}
+
+      {/* Order Items */}
+      <div className="space-y-2 mb-4">
+        {order.order_items.map((item) => (
+          <div key={item.id} className="flex justify-between items-center text-sm">
+            <div>
+              <span className="font-medium">{item.quantity}x</span>{' '}
+              <span>{item.menu_item?.name || 'Unknown Item'}</span>
+            </div>
+            <span className="text-gray-500">
+              {formatCurrency(item.price * item.quantity)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Order Total */}
+      <div className="flex justify-between items-center mb-4 pt-2 border-t border-gray-200">
+        <span className="font-semibold">Total:</span>
+        <span className="font-semibold">{formatCurrency(order.total_amount)}</span>
+      </div>
+
+      {/* Action Buttons */}
+      {actionButtons && (
+        <div className="mt-4">
+          {actionButtons}
+        </div>
+      )}
     </div>
   );
 }
