@@ -7,7 +7,7 @@ import { SignUp } from './pages/auth/SignUp';
 import { ForgotPassword } from './pages/auth/ForgotPassword';
 import { Dashboard } from './pages/dashboard/Dashboard';
 import { Kitchen } from './pages/kitchen/Kitchen';
-import { KitchenStationsSimple } from './pages/kitchen/KitchenStationsSimple';
+import { KitchenStations } from './pages/kitchen/KitchenStations';
 import { KitchenStation } from './pages/kitchen/KitchenStation';
 import { CustomerOrder } from './pages/order/CustomerOrder';
 import { OrderSuccess } from './pages/order/OrderSuccess';
@@ -96,7 +96,7 @@ function App() {
             path="/kitchen" 
             element={
               <ProtectedRoute>
-                <KitchenStationsSimple />
+                <KitchenStations />
               </ProtectedRoute>
             } 
           />

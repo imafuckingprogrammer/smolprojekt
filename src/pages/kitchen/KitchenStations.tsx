@@ -12,6 +12,8 @@ import {
 import { useMultiUserRealtime } from '../../hooks/useMultiUserRealtime';
 import { useOrders } from '../../hooks/useOrders';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { UserAvatar } from '../../components/ui/UserAvatar';
+import { RealTimeStatus } from '../../components/ui/RealTimeStatus';
 
 const STATION_ICONS = {
   hot_food: FireIcon,
@@ -35,18 +37,8 @@ export function KitchenStations() {
   const [showCreateStation, setShowCreateStation] = useState(false);
 
   const getStationStats = (stationId: string, stationType: string) => {
-    let stationOrders;
-    
-    if (stationType === 'all') {
-      stationOrders = orders;
-    } else {
-      stationOrders = orders.filter(order => 
-        order.assigned_station_id === stationId ||
-        (!order.assigned_station_id && order.order_items.some(item => 
-          item.menu_item?.preferred_station_id === stationId
-        ))
-      );
-    }
+    // For now, show all orders for all stations since station assignment isn't fully implemented
+    const stationOrders = orders;
 
     const activeOrders = stationOrders.filter(order => 
       ['pending', 'preparing', 'ready'].includes(order.status)
@@ -69,7 +61,7 @@ export function KitchenStations() {
       readyOrders: activeOrders.filter(o => o.status === 'ready').length,
       activeStaff: activeStaff.length,
       avgWaitTime,
-      urgentOrders: activeOrders.filter(o => (o.priority || 5) >= 8).length
+      urgentOrders: 0 // Will implement when priority system is active
     };
   };
 
@@ -95,13 +87,8 @@ export function KitchenStations() {
             </div>
             
             <div className="flex items-center space-x-4">
-              {/* Connection Status */}
-              <div className="flex items-center space-x-2">
-                <div className={`h-3 w-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="text-sm text-gray-600">
-                  {isConnected ? 'Real-time Connected' : 'Disconnected'}
-                </span>
-              </div>
+              {/* Real-time Connection Status */}
+              <RealTimeStatus />
               
               {/* Total Active Staff */}
               <div className="flex items-center space-x-2 bg-blue-50 px-3 py-2 rounded-lg">
@@ -194,26 +181,30 @@ export function KitchenStations() {
                     </div>
                   )}
 
-                  {/* Active Staff List */}
+                  {/* Active Staff List with Avatars */}
                   {stats.activeStaff > 0 && (
                     <div className="mt-3 pt-3 border-t border-white">
-                      <div className="text-xs text-gray-600 mb-1">Active Staff:</div>
-                      <div className="flex flex-wrap gap-1">
+                      <div className="text-xs text-gray-600 mb-2">Active Staff:</div>
+                      <div className="flex flex-wrap gap-2">
                         {activeSessions
                           .filter(session => session.station_id === station.id && session.status === 'active')
-                          .slice(0, 3)
+                          .slice(0, 4)
                           .map((session) => (
-                            <span
-                              key={session.id}
-                              className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-white text-gray-800"
-                            >
-                              {session.user_name}
-                            </span>
+                            <div key={session.id} className="flex items-center space-x-1">
+                              <UserAvatar 
+                                name={session.user_name} 
+                                status={session.status as any}
+                                size="sm"
+                              />
+                              <span className="text-xs text-gray-700 max-w-16 truncate">
+                                {session.user_name}
+                              </span>
+                            </div>
                           ))}
-                        {stats.activeStaff > 3 && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-white text-gray-800">
-                            +{stats.activeStaff - 3} more
-                          </span>
+                        {stats.activeStaff > 4 && (
+                          <div className="flex items-center text-xs text-gray-600">
+                            +{stats.activeStaff - 4} more
+                          </div>
                         )}
                       </div>
                     </div>

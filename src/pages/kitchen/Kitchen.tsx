@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useOrders } from '../../hooks/useOrders';
+import { useOrdersRealTime } from '../../hooks/useOrdersRealTime';
 import { supabase } from '../../lib/supabase';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { formatCurrency, getOrderAge, getOrderAgeColor } from '../../lib/utils';
@@ -18,7 +18,7 @@ import {
 
 export function Kitchen() {
   const { restaurant } = useAuth();
-  const { orders, loading, fetchOrders, updateOrderStatus } = useOrders();
+  const { orders, loading, updateOrderStatus, refetch: fetchOrders } = useOrdersRealTime();
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -26,7 +26,7 @@ export function Kitchen() {
 
   useEffect(() => {
     if (restaurant) {
-      fetchOrders(restaurant.id);
+      fetchOrders();
     }
   }, [restaurant, fetchOrders]);
 
@@ -39,7 +39,7 @@ export function Kitchen() {
     // Set up real-time subscription for new orders
     const setupRealtimeSubscription = () => {
       subscription = supabase
-        .channel('orders')
+        .channel(`orders_${restaurant.id}_${Date.now()}`) // Unique channel name
         .on(
           'postgres_changes',
           {
@@ -49,8 +49,8 @@ export function Kitchen() {
             filter: `restaurant_id=eq.${restaurant.id}`
           },
           (payload) => {
-            console.log('Order update received:', payload);
-            fetchOrders(restaurant.id);
+            console.log('🔥 REAL-TIME Order update received:', payload);
+            fetchOrders();
             
             // Play sound for new orders
             if (payload.eventType === 'INSERT' && soundEnabled) {
@@ -58,7 +58,9 @@ export function Kitchen() {
             }
           }
         )
-        .subscribe();
+        .subscribe((status) => {
+          console.log('🔥 REAL-TIME Subscription status:', status);
+        });
     };
 
     setupRealtimeSubscription();
@@ -66,7 +68,7 @@ export function Kitchen() {
     // Set up auto-refresh
     if (autoRefresh) {
       const interval = setInterval(() => {
-        fetchOrders(restaurant.id);
+        fetchOrders();
       }, 30000); // Refresh every 30 seconds
       setRefreshInterval(interval);
     }
@@ -237,7 +239,7 @@ export function Kitchen() {
               </div>
               
               <button
-                onClick={() => restaurant && fetchOrders(restaurant.id)}
+                onClick={() => restaurant && fetchOrders()}
                 className="btn-secondary text-sm flex items-center"
               >
                 <ArrowPathIcon className="h-4 w-4 mr-1" />

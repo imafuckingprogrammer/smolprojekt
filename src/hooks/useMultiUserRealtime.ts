@@ -66,14 +66,16 @@ export function useMultiUserRealtime(selectedStationId?: string) {
   const initializeMultiUserSystem = async () => {
     try {
       // Load kitchen stations
-      const { data: stations } = await supabase
+      const { data: stations, error: stationsError } = await supabase
         .from('kitchen_stations')
         .select('*')
         .eq('restaurant_id', restaurant!.id)
         .eq('is_active', true)
         .order('position_order');
 
-      if (stations) {
+      console.log('Loading stations:', { stations, stationsError });
+
+      if (stations && stations.length > 0) {
         setState(prev => ({ ...prev, stations }));
         
         // Set current station if specified
@@ -84,6 +86,9 @@ export function useMultiUserRealtime(selectedStationId?: string) {
             await joinStation(station.id);
           }
         }
+      } else {
+        // Create default stations if none exist
+        await createDefaultStations();
       }
 
       // Setup real-time subscriptions
@@ -92,6 +97,53 @@ export function useMultiUserRealtime(selectedStationId?: string) {
       
     } catch (error) {
       console.error('Failed to initialize multi-user system:', error);
+    }
+  };
+
+  const createDefaultStations = async () => {
+    if (!restaurant) return;
+
+    try {
+      const defaultStations = [
+        {
+          restaurant_id: restaurant.id,
+          station_name: 'Main Kitchen',
+          station_type: 'all',
+          position_order: 1
+        },
+        {
+          restaurant_id: restaurant.id,
+          station_name: 'Hot Food Station', 
+          station_type: 'hot_food',
+          position_order: 2
+        },
+        {
+          restaurant_id: restaurant.id,
+          station_name: 'Cold Food & Salads',
+          station_type: 'cold_food', 
+          position_order: 3
+        },
+        {
+          restaurant_id: restaurant.id,
+          station_name: 'Drinks & Beverages',
+          station_type: 'drinks',
+          position_order: 4
+        }
+      ];
+
+      const { data, error } = await supabase
+        .from('kitchen_stations')
+        .insert(defaultStations)
+        .select();
+
+      if (error) {
+        console.error('Error creating default stations:', error);
+      } else {
+        console.log('Created default stations:', data);
+        setState(prev => ({ ...prev, stations: data || [] }));
+      }
+    } catch (error) {
+      console.error('Error in createDefaultStations:', error);
     }
   };
 
