@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useOrdersRealTime } from '../../hooks/useOrdersRealTime';
+import { supabase } from '../../lib/supabase';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { formatCurrency, getOrderAge, getOrderAgeColor } from '../../lib/utils';
 import type { OrderWithItems } from '../../types/database';
@@ -53,12 +54,13 @@ export function Kitchen() {
 
     const heartbeat = setInterval(async () => {
       try {
-        // Update last_seen timestamp to keep session alive
-        await fetch('/api/heartbeat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: currentSessionId })
-        });
+        // Update last_seen timestamp using Supabase directly
+        const { error } = await supabase
+          .from('active_sessions')
+          .update({ last_seen: new Date().toISOString() })
+          .eq('id', currentSessionId);
+        
+        if (error) throw error;
         setConnectionStatus('connected');
       } catch (error) {
         console.error('Heartbeat failed:', error);

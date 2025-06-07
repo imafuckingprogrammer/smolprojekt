@@ -182,20 +182,32 @@ export function useOrdersRealTime() {
     try {
       const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
-      const { error } = await supabase
+      console.log('🔥 Attempting to create session:', {
+        sessionId,
+        restaurant_id: restaurant.id,
+        user_name: userName
+      });
+
+      const { data, error } = await supabase
         .from('active_sessions')
         .insert({
           id: sessionId,
           restaurant_id: restaurant.id,
           user_name: userName,
           session_token: sessionId,
-          status: 'active'
-        });
+          status: 'active',
+          last_seen: new Date().toISOString()
+        })
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Session creation error:', error);
+        throw error;
+      }
       
+      console.log('✅ Session created successfully:', data);
       setCurrentSessionId(sessionId);
-      console.log('✅ Session created:', sessionId);
       return sessionId;
     } catch (err) {
       console.error('❌ Error creating session:', err);
