@@ -10,33 +10,37 @@ import { Kitchen } from './pages/kitchen/Kitchen';
 import { CustomerOrder } from './pages/order/CustomerOrder';
 import { OrderSuccess } from './pages/order/OrderSuccess';
 import { OrderError } from './pages/order/OrderError';
+import { TestMenu } from './pages/test/TestMenu';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 
 function App() {
   const { user, restaurant, loading } = useAuth();
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
-
   return (
     <Router>
       <div className="min-h-screen bg-gray-50">
         <Routes>
-          {/* Public Routes */}
+          {/* Public Routes - Don't wait for auth loading */}
           <Route path="/order/:token" element={<CustomerOrder />} />
           <Route path="/order/:token/success" element={<OrderSuccess />} />
           <Route path="/order/:token/error" element={<OrderError />} />
+          
+          {/* Test Route */}
+          <Route path="/test" element={<TestMenu />} />
           
           {/* Auth Routes */}
           <Route 
             path="/auth/*" 
             element={
-              user ? <Navigate to="/dashboard" replace /> : <AuthRoutes />
+              loading ? (
+                <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                  <LoadingSpinner size="lg" />
+                </div>
+              ) : user ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <AuthRoutes />
+              )
             } 
           />
           
@@ -63,9 +67,15 @@ function App() {
           <Route 
             path="/" 
             element={
-              user ? 
-                <Navigate to="/dashboard" replace /> : 
+              loading ? (
+                <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                  <LoadingSpinner size="lg" />
+                </div>
+              ) : user ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
                 <Navigate to="/auth/signin" replace />
+              )
             } 
           />
           
@@ -103,7 +113,7 @@ function NotFound() {
           Go Home
         </a>
       </div>
-    </div>
+      </div>
   );
 }
 

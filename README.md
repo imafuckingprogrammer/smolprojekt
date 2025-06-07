@@ -267,5 +267,3 @@ For support, email support@tabledirect.com or create an issue in the repository.
 ---
 
 **TableDirect** - Revolutionizing restaurant ordering with QR code technology.
-#   s m o l p r o j e k t  
- 
