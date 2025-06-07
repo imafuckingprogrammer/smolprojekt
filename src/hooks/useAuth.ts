@@ -4,9 +4,13 @@ import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Restaurant } from '../types/database';
 
-// Cache keys
-const AUTH_CACHE_KEY = 'tabledirect_auth_cache';
-const RESTAURANT_CACHE_KEY = 'tabledirect_restaurant_cache';
+// Cache keys - will be made unique per user
+const AUTH_CACHE_BASE = 'tabledirect_auth_cache';
+const RESTAURANT_CACHE_BASE = 'tabledirect_restaurant_cache';
+
+// Helper functions for unique cache keys
+const getAuthCacheKey = (userId?: string) => `${AUTH_CACHE_BASE}_${userId || 'guest'}`;
+const getRestaurantCacheKey = (userId?: string) => `${RESTAURANT_CACHE_BASE}_${userId || 'guest'}`;
 
 interface AuthCache {
   user: User | null;
@@ -31,9 +35,9 @@ export interface AuthActions {
 }
 
 // Helper functions for cache management
-const getAuthCache = (): AuthCache | null => {
+const getAuthCache = (userId?: string): AuthCache | null => {
   try {
-    const cached = localStorage.getItem(AUTH_CACHE_KEY);
+    const cached = localStorage.getItem(getAuthCacheKey(userId));
     if (cached) {
       const parsed = JSON.parse(cached);
       // Cache valid for 5 minutes
@@ -54,16 +58,16 @@ const setAuthCache = (user: User | null, restaurant: Restaurant | null) => {
       restaurant,
       timestamp: Date.now()
     };
-    localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(cache));
+    localStorage.setItem(getAuthCacheKey(user?.id), JSON.stringify(cache));
   } catch (error) {
     console.warn('Failed to set auth cache:', error);
   }
 };
 
-const clearAuthCache = () => {
+const clearAuthCache = (userId?: string) => {
   try {
-    localStorage.removeItem(AUTH_CACHE_KEY);
-    localStorage.removeItem(RESTAURANT_CACHE_KEY);
+    localStorage.removeItem(getAuthCacheKey(userId));
+    localStorage.removeItem(getRestaurantCacheKey(userId));
   } catch (error) {
     console.warn('Failed to clear auth cache:', error);
   }
@@ -72,7 +76,7 @@ const clearAuthCache = () => {
 export function useAuth(): AuthState & AuthActions {
   // Initialize with cached data for instant loading
   const initializeWithCache = () => {
-    const cached = getAuthCache();
+    const cached = getAuthCache(); // Will get user-specific cache after session loads
     if (cached) {
       return {
         user: cached.user,
@@ -199,7 +203,7 @@ export function useAuth(): AuthState & AuthActions {
         }
         // Restaurant not found, user needs to complete onboarding
         setState(prev => ({ ...prev, restaurant: null, loading: false }));
-        clearAuthCache();
+        clearAuthCache(userId);
       } else {
         setState(prev => ({ ...prev, restaurant: data, loading: false }));
         // Cache the successful auth state

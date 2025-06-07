@@ -10,6 +10,7 @@ import {
   ClipboardDocumentListIcon, 
   QrCodeIcon, 
   CubeIcon,
+  FireIcon,
   Bars3Icon,
   XMarkIcon,
   ArrowRightOnRectangleIcon
@@ -20,6 +21,7 @@ const navigation = [
   { name: 'Orders', href: '/dashboard/orders', icon: ClipboardDocumentListIcon },
   { name: 'Menu', href: '/dashboard/menu', icon: CubeIcon },
   { name: 'Tables', href: '/dashboard/tables', icon: QrCodeIcon },
+  { name: 'Kitchen', href: '/kitchen', icon: FireIcon },
 ];
 
 export function Dashboard() {

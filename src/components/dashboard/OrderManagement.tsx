@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useOrders } from '../../hooks/useOrders';
+import { useOrdersRealTime } from '../../hooks/useOrdersRealTime';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { formatCurrency, formatDate, getOrderAge, getOrderAgeColor } from '../../lib/utils';
 import type { OrderWithItems } from '../../types/database';
@@ -13,22 +13,22 @@ import {
 
 export function OrderManagement() {
   const { restaurant } = useAuth();
-  const { orders, loading, fetchOrders, updateOrderStatus } = useOrders();
+  const { orders, loading, updateOrderStatus, refetch: fetchOrders } = useOrdersRealTime();
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedOrder, setSelectedOrder] = useState<OrderWithItems | null>(null);
 
   useEffect(() => {
     if (restaurant) {
-      fetchOrders(restaurant.id);
+      fetchOrders();
     }
-  }, [restaurant, fetchOrders]);
+  }, [restaurant]); // Removed fetchOrders to prevent infinite loops
 
   const handleStatusUpdate = async (orderId: string, newStatus: any) => {
     try {
       await updateOrderStatus(orderId, newStatus);
       // Optionally refresh the orders
       if (restaurant) {
-        fetchOrders(restaurant.id);
+        fetchOrders();
       }
     } catch (error) {
       console.error('Error updating order status:', error);

@@ -28,7 +28,7 @@ export function Kitchen() {
     if (restaurant) {
       fetchOrders();
     }
-  }, [restaurant, fetchOrders]);
+  }, [restaurant]); // Removed fetchOrders to prevent infinite loops
 
   // Set up real-time subscription and auto-refresh
   useEffect(() => {

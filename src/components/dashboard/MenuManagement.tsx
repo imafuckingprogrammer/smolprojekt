@@ -57,7 +57,7 @@ export const MenuManagement = memo(function MenuManagement() {
       
       // Set up real-time subscription for menu changes
       const subscription = supabase
-        .channel('menu_changes')
+        .channel(`menu_changes_${restaurant.id}_${Date.now()}`)
         .on(
           'postgres_changes',
           {

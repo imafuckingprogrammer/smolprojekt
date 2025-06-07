@@ -16,10 +16,10 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseKey, {
   },
   realtime: {
     params: {
-      eventsPerSecond: 50, // Increase for high-frequency restaurant updates
-      heartbeatIntervalMs: 15000, // Faster heartbeat for better connection detection
-      reconnectAfterMs: 1000 // Quick reconnection for reliability
-    }
+      eventsPerSecond: 10, // Reduced from 50 for stability
+    },
+    heartbeatIntervalMs: 30000, // Increased from 15000 for stability
+    reconnectAfterMs: () => 5000 // Increased from 1000 for stable reconnection
   }
 });
 

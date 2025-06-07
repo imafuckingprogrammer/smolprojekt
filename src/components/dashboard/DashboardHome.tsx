@@ -1,4 +1,4 @@
-import { useEffect, useState, memo } from 'react';
+import { useEffect, useState, memo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useInitialSetup } from '../../hooks/useInitialSetup';
@@ -58,7 +58,7 @@ export const DashboardHome = memo(function DashboardHome() {
     }
   }, [restaurant]);
 
-  const fetchDashboardData = async (isBackgroundUpdate = false) => {
+  const fetchDashboardData = useCallback(async (isBackgroundUpdate = false) => {
     if (!restaurant) return;
 
     try {
@@ -143,7 +143,7 @@ export const DashboardHome = memo(function DashboardHome() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [restaurant]);
 
   if (loading) {
     return <DashboardSkeleton />;
