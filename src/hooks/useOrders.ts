@@ -47,7 +47,8 @@ export function useOrders(): OrdersState & OrdersActions {
           )
         `)
         .eq('restaurant_id', restaurantId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(50); // Add reasonable limit for performance
 
       if (error) throw error;
 

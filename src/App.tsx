@@ -12,9 +12,45 @@ import { OrderSuccess } from './pages/order/OrderSuccess';
 import { OrderError } from './pages/order/OrderError';
 import { TestMenu } from './pages/test/TestMenu';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { useEffect, useState } from 'react';
 
 function App() {
-  const { user, restaurant, loading } = useAuth();
+  const { user, restaurant, loading, error } = useAuth();
+  const [showFallback, setShowFallback] = useState(false);
+
+  // Fallback mechanism to prevent infinite loading
+  useEffect(() => {
+    if (loading) {
+      const timeoutId = setTimeout(() => {
+        setShowFallback(true);
+      }, 15000); // 15 seconds
+
+      return () => clearTimeout(timeoutId);
+    } else {
+      setShowFallback(false);
+    }
+  }, [loading]);
+
+  // If loading for too long, show error state
+  if (showFallback) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="text-center">
+          <h1 className="text-xl font-semibold text-gray-900 mb-4">Loading Error</h1>
+          <p className="text-gray-600 mb-6">
+            The application is taking longer than expected to load. 
+            Please refresh the page or try again later.
+          </p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            Refresh Page
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Router>

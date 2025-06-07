@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
@@ -22,7 +22,7 @@ interface DashboardStats {
   pendingOrders: number;
 }
 
-export function DashboardHome() {
+export const DashboardHome = memo(function DashboardHome() {
   const { restaurant } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,36 +46,39 @@ export function DashboardHome() {
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Fetch all orders
-      const { data: orders } = await supabase
-        .from('orders')
-        .select('*, created_at, total_amount, status')
-        .eq('restaurant_id', restaurant.id);
-
-      // Fetch menu items count
-      const { count: menuItemsCount } = await supabase
-        .from('menu_items')
-        .select('*', { count: 'exact', head: true })
-        .eq('restaurant_id', restaurant.id)
-        .eq('is_available', true);
-
-      // Fetch tables count
-      const { count: tablesCount } = await supabase
-        .from('restaurant_tables')
-        .select('*', { count: 'exact', head: true })
-        .eq('restaurant_id', restaurant.id)
-        .eq('is_active', true);
-
-      // Fetch recent orders with table info
-      const { data: recentOrdersData } = await supabase
-        .from('orders')
-        .select(`
-          *,
-          restaurant_table:restaurant_tables(table_number)
-        `)
-        .eq('restaurant_id', restaurant.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
+      // Fetch all data in parallel for better performance
+      const [
+        { data: orders },
+        { count: menuItemsCount },
+        { count: tablesCount },
+        { data: recentOrdersData }
+      ] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('*, created_at, total_amount, status')
+          .eq('restaurant_id', restaurant.id)
+          .order('created_at', { ascending: false })
+          .limit(100), // Limit to last 100 orders for performance
+        supabase
+          .from('menu_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('restaurant_id', restaurant.id)
+          .eq('is_available', true),
+        supabase
+          .from('restaurant_tables')
+          .select('*', { count: 'exact', head: true })
+          .eq('restaurant_id', restaurant.id)
+          .eq('is_active', true),
+        supabase
+          .from('orders')
+          .select(`
+            *,
+            restaurant_table:restaurant_tables(table_number)
+          `)
+          .eq('restaurant_id', restaurant.id)
+          .order('created_at', { ascending: false })
+          .limit(5)
+      ]);
 
       if (orders) {
         const todayOrders = orders.filter(order => 
@@ -268,4 +271,4 @@ export function DashboardHome() {
       </div>
     </div>
   );
-} 
+});

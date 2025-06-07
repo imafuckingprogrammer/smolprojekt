@@ -21,7 +21,7 @@ export function OrderManagement() {
     if (restaurant) {
       fetchOrders(restaurant.id);
     }
-  }, [restaurant, fetchOrders]);
+  }, [restaurant]); // Remove fetchOrders from dependencies to prevent loop
 
   const handleStatusUpdate = async (orderId: string, newStatus: any) => {
     try {

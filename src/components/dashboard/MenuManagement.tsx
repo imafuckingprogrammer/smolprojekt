@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
@@ -9,7 +9,9 @@ import {
   PencilIcon,
   TrashIcon,
   EyeIcon,
-  EyeSlashIcon
+  EyeSlashIcon,
+  CheckCircleIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 
 interface CategoryFormData {
@@ -24,7 +26,7 @@ interface MenuItemFormData {
   image_url: string;
 }
 
-export function MenuManagement() {
+export const MenuManagement = memo(function MenuManagement() {
   const { restaurant } = useAuth();
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -33,6 +35,8 @@ export function MenuManagement() {
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string>('');
   
   const [categoryForm, setCategoryForm] = useState<CategoryFormData>({
     name: ''
@@ -49,6 +53,39 @@ export function MenuManagement() {
   useEffect(() => {
     if (restaurant) {
       loadMenuData();
+      
+      // Set up real-time subscription for menu changes
+      const subscription = supabase
+        .channel('menu_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'menu_categories',
+            filter: `restaurant_id=eq.${restaurant.id}`
+          },
+          () => {
+            loadMenuData();
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'menu_items',
+            filter: `restaurant_id=eq.${restaurant.id}`
+          },
+          () => {
+            loadMenuData();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(subscription);
+      };
     }
   }, [restaurant]);
 
@@ -127,11 +164,12 @@ export function MenuManagement() {
     }
   };
 
-  const handleItemSubmit = async (e: React.FormEvent) => {
+  const handleItemSubmit = async (e: React.FormEvent, closeAfter = false) => {
     e.preventDefault();
     if (!restaurant) return;
 
     try {
+      setSubmitting(true);
       const price = parseFloat(itemForm.price);
       if (isNaN(price) || price < 0) {
         alert('Please enter a valid price');
@@ -154,6 +192,9 @@ export function MenuManagement() {
           .eq('id', editingItem.id);
 
         if (error) throw error;
+        setSuccessMessage('Menu item updated successfully!');
+        setShowItemForm(false);
+        setEditingItem(null);
       } else {
         // Create new item
         const { error } = await supabase
@@ -170,21 +211,32 @@ export function MenuManagement() {
           });
 
         if (error) throw error;
+        setSuccessMessage('Menu item added successfully!');
+        
+        // Reset form for new item
+        setItemForm({
+          name: '',
+          description: '',
+          price: '',
+          category_id: itemForm.category_id, // Keep category selected
+          image_url: ''
+        });
+        
+        // Close form if requested
+        if (closeAfter) {
+          setShowItemForm(false);
+        }
       }
 
-      setItemForm({
-        name: '',
-        description: '',
-        price: '',
-        category_id: '',
-        image_url: ''
-      });
-      setShowItemForm(false);
-      setEditingItem(null);
       loadMenuData();
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error('Error saving menu item:', error);
       alert('Failed to save menu item. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -298,7 +350,7 @@ export function MenuManagement() {
 
   if (loading) {
     return (
-      <div className="p-6">
+      <div className="p-6 flex items-center justify-center min-h-96">
         <LoadingSpinner size="lg" />
       </div>
     );
@@ -306,6 +358,14 @@ export function MenuManagement() {
 
   return (
     <div className="p-6">
+      {/* Success Message */}
+      {successMessage && (
+        <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center">
+          <CheckCircleIcon className="h-5 w-5 text-green-600 mr-3" />
+          <span className="text-green-800">{successMessage}</span>
+        </div>
+      )}
+      
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Menu Management</h1>
@@ -376,10 +436,18 @@ export function MenuManagement() {
       {showItemForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-screen overflow-y-auto">
-            <h2 className="text-lg font-medium mb-4">
-              {editingItem ? 'Edit Menu Item' : 'Add New Menu Item'}
-            </h2>
-            <form onSubmit={handleItemSubmit}>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-medium">
+                {editingItem ? 'Edit Menu Item' : 'Add New Menu Item'}
+              </h2>
+              <button
+                onClick={cancelItemForm}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={(e) => handleItemSubmit(e, false)}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Category
@@ -450,20 +518,33 @@ export function MenuManagement() {
                   placeholder="https://..."
                 />
               </div>
-              <div className="flex justify-end space-x-3">
+              <div className="flex justify-between space-x-3">
                 <button
                   type="button"
                   onClick={cancelItemForm}
                   className="px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
                 >
-                  Cancel
+                  Close
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
-                >
-                  {editingItem ? 'Update' : 'Add'} Item
-                </button>
+                <div className="flex space-x-2">
+                  {!editingItem && (
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {submitting ? 'Adding...' : 'Add & Continue'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
+                    onClick={(e) => handleItemSubmit(e, true)}
+                  >
+                    {submitting ? 'Saving...' : editingItem ? 'Update' : 'Add & Close'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -590,5 +671,4 @@ export function MenuManagement() {
       </div>
     </div>
   );
-}
- 
+});

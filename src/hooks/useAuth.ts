@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { AuthError } from '@supabase/supabase-js';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
@@ -30,19 +30,54 @@ export function useAuth(): AuthState & AuthActions {
   });
 
   useEffect(() => {
+    let mounted = true;
+    let timeoutId: NodeJS.Timeout;
+
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setState(prev => ({ ...prev, session, user: session?.user ?? null }));
-      if (session?.user) {
-        fetchRestaurant(session.user.id);
-      } else {
-        setState(prev => ({ ...prev, loading: false }));
+    const initializeAuth = async () => {
+      try {
+        // Set a timeout to prevent infinite loading
+        timeoutId = setTimeout(() => {
+          if (mounted) {
+            console.warn('Auth initialization timed out');
+            setState(prev => ({ ...prev, loading: false, error: 'Authentication timed out' }));
+          }
+                 }, 5000); // 5 second timeout
+
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
+        
+        setState(prev => ({ ...prev, session, user: session?.user ?? null }));
+        
+        if (session?.user) {
+          await fetchRestaurant(session.user.id);
+        } else {
+          setState(prev => ({ ...prev, loading: false }));
+        }
+        
+        // Clear timeout if successful
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      } catch (error) {
+        console.error('Error initializing auth:', error);
+        if (mounted) {
+          setState(prev => ({ ...prev, loading: false, error: 'Failed to initialize authentication' }));
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
-    });
+    };
+
+    initializeAuth();
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!mounted) return;
+        
         setState(prev => ({ ...prev, session, user: session?.user ?? null }));
         
         if (session?.user) {
@@ -53,16 +88,29 @@ export function useAuth(): AuthState & AuthActions {
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const fetchRestaurant = async (userId: string) => {
+  const fetchRestaurant = useCallback(async (userId: string) => {
     try {
-      const { data, error } = await supabase
+      // Set a timeout for the restaurant fetch
+      const timeoutPromise = new Promise((_, reject) => {
+                 setTimeout(() => reject(new Error('Restaurant fetch timed out')), 3000);
+      });
+
+      const fetchPromise = supabase
         .from('restaurants')
         .select('*')
         .eq('id', userId)
         .single();
+
+      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any;
 
       if (error) {
         if (error.code !== 'PGRST116') { // Not found error
@@ -81,7 +129,7 @@ export function useAuth(): AuthState & AuthActions {
         loading: false 
       }));
     }
-  };
+  }, []);
 
   const signIn = async (email: string, password: string) => {
     setState(prev => ({ ...prev, loading: true, error: null }));
@@ -93,6 +141,8 @@ export function useAuth(): AuthState & AuthActions {
       });
 
       if (error) throw error;
+      
+      // Don't set loading to false here - let the auth state change handler handle it
     } catch (error) {
       const message = error instanceof AuthError ? error.message : 'Sign in failed';
       setState(prev => ({ ...prev, error: message, loading: false }));

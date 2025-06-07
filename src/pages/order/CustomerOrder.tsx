@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { parseQRToken } from '../../lib/qr-generator';
@@ -12,6 +12,15 @@ import {
   ShoppingCartIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
+
+// Cache for menu data to avoid repeated fetches
+const menuDataCache = new Map<string, {
+  restaurant: Restaurant;
+  table: RestaurantTable;
+  categories: MenuCategory[];
+  menuItems: MenuItem[];
+  timestamp: number;
+}>();
 
 export function CustomerOrder() {
   const { token } = useParams<{ token: string }>();
@@ -44,6 +53,20 @@ export function CustomerOrder() {
       setLoading(true);
       setError(null);
 
+      // Check cache first (5 minute TTL)
+      const cached = menuDataCache.get(token);
+      if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+        setRestaurant(cached.restaurant);
+        setTable(cached.table);
+        setCategories(cached.categories);
+        setMenuItems(cached.menuItems);
+        if (cached.categories.length > 0) {
+          setSelectedCategory(cached.categories[0].id);
+        }
+        setLoading(false);
+        return;
+      }
+
       // Parse QR token
       const qrData = parseQRToken(token);
       if (!qrData) {
@@ -51,65 +74,85 @@ export function CustomerOrder() {
         return;
       }
 
-      // Fetch table information
-      const { data: tableData, error: tableError } = await supabase
-        .from('restaurant_tables')
-        .select('*')
-        .eq('qr_token', token)
-        .eq('is_active', true)
-        .single();
+      // Fetch all data in parallel for better performance
+      const [
+        { data: tableData, error: tableError },
+        { data: restaurantData, error: restaurantError }
+      ] = await Promise.all([
+        supabase
+          .from('restaurant_tables')
+          .select('*')
+          .eq('qr_token', token)
+          .eq('is_active', true)
+          .single(),
+        supabase
+          .from('restaurants')
+          .select('*')
+          .eq('id', qrData.restaurant_id)
+          .single()
+      ]);
 
       if (tableError || !tableData) {
         setError('Table not found or is currently inactive.');
         return;
       }
 
-      // Fetch restaurant information
-      const { data: restaurantData, error: restaurantError } = await supabase
-        .from('restaurants')
-        .select('*')
-        .eq('id', tableData.restaurant_id)
-        .single();
-
       if (restaurantError || !restaurantData) {
         setError('Restaurant not found.');
         return;
       }
 
-      // Fetch menu categories
-      const { data: categoriesData, error: categoriesError } = await supabase
-        .from('menu_categories')
-        .select('*')
-        .eq('restaurant_id', restaurantData.id)
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
+      // Fetch menu data in parallel
+      const [
+        { data: categoriesData, error: categoriesError },
+        { data: itemsData, error: itemsError }
+      ] = await Promise.all([
+        supabase
+          .from('menu_categories')
+          .select('*')
+          .eq('restaurant_id', restaurantData.id)
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true }),
+        supabase
+          .from('menu_items')
+          .select('*')
+          .eq('restaurant_id', restaurantData.id)
+          .eq('is_available', true)
+          .order('sort_order', { ascending: true })
+      ]);
 
       if (categoriesError) {
         setError('Failed to load menu categories.');
         return;
       }
 
-      // Fetch menu items
-      const { data: itemsData, error: itemsError } = await supabase
-        .from('menu_items')
-        .select('*')
-        .eq('restaurant_id', restaurantData.id)
-        .eq('is_available', true)
-        .order('sort_order', { ascending: true });
-
       if (itemsError) {
         setError('Failed to load menu items.');
         return;
       }
 
-      setRestaurant(restaurantData);
-      setTable(tableData);
-      setCategories(categoriesData || []);
-      setMenuItems(itemsData || []);
+      const finalRestaurant = restaurantData;
+      const finalTable = tableData;
+      const finalCategories = categoriesData || [];
+      const finalMenuItems = itemsData || [];
+
+      // Cache the data
+      menuDataCache.set(token, {
+        restaurant: finalRestaurant,
+        table: finalTable,
+        categories: finalCategories,
+        menuItems: finalMenuItems,
+        timestamp: Date.now()
+      });
+
+      setRestaurant(finalRestaurant);
+      setTable(finalTable);
+      setCategories(finalCategories);
+      setMenuItems(finalMenuItems);
       
       // Set first category as selected
-      if (categoriesData && categoriesData.length > 0) {
-        setSelectedCategory(categoriesData[0].id);
+      if (finalCategories.length > 0) {
+        setSelectedCategory(finalCategories[0].id);
       }
     } catch (error) {
       console.error('Error loading menu data:', error);
@@ -277,6 +320,8 @@ export function CustomerOrder() {
                           src={item.image_url}
                           alt={item.name}
                           className="w-full h-full object-cover rounded-lg"
+                          loading="lazy"
+                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
                         />
                       </div>
                     )}
