@@ -81,6 +81,8 @@ export interface MenuItem {
   image_url?: string;
   is_available: boolean;
   sort_order: number;
+  preferred_station_id?: string;
+  preparation_time_minutes?: number;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +97,10 @@ export interface Order {
   special_instructions?: string;
   customer_name?: string;
   assigned_chef?: string;
+  priority?: number;
+  complexity_score?: number;
+  estimated_time_minutes?: number;
+  assigned_station_id?: string;
   created_at: string;
   updated_at: string;
 }

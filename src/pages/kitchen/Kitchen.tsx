@@ -28,53 +28,58 @@ export function Kitchen() {
     if (restaurant) {
       fetchOrders(restaurant.id);
     }
-  }, [restaurant]); // Remove fetchOrders from dependencies to prevent loop
+  }, [restaurant, fetchOrders]);
 
   // Set up real-time subscription and auto-refresh
   useEffect(() => {
-    if (!restaurant?.id) return;
+    if (!restaurant) return;
 
-    // Create unique channel name to prevent conflicts
-    const channel = supabase
-      .channel(`restaurant-orders-${restaurant.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'orders',
-          filter: `restaurant_id=eq.${restaurant.id}`
-        },
-        (payload) => {
-          console.log('Order update received:', payload);
-          
-          // For any order changes, refetch recent orders
-          fetchOrders(restaurant.id);
-          
-          // Play sound for new orders
-          if (payload.eventType === 'INSERT' && soundEnabled) {
-            playNotificationSound();
+    let subscription: any = null;
+
+    // Set up real-time subscription for new orders
+    const setupRealtimeSubscription = () => {
+      subscription = supabase
+        .channel('orders')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'orders',
+            filter: `restaurant_id=eq.${restaurant.id}`
+          },
+          (payload) => {
+            console.log('Order update received:', payload);
+            fetchOrders(restaurant.id);
+            
+            // Play sound for new orders
+            if (payload.eventType === 'INSERT' && soundEnabled) {
+              playNotificationSound();
+            }
           }
-        }
-      )
-      .subscribe();
+        )
+        .subscribe();
+    };
 
-    // Set up auto-refresh with cleanup
-    let interval: NodeJS.Timeout | null = null;
+    setupRealtimeSubscription();
+
+    // Set up auto-refresh
     if (autoRefresh) {
-      interval = setInterval(() => {
+      const interval = setInterval(() => {
         fetchOrders(restaurant.id);
-      }, 30000);
+      }, 30000); // Refresh every 30 seconds
       setRefreshInterval(interval);
     }
 
     return () => {
-      supabase.removeChannel(channel);
-      if (interval) {
-        clearInterval(interval);
+      if (subscription) {
+        supabase.removeChannel(subscription);
+      }
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
       }
     };
-  }, [restaurant?.id, autoRefresh, soundEnabled]);
+  }, [restaurant, autoRefresh, soundEnabled, fetchOrders]);
 
   // Check for new orders and play sound
   useEffect(() => {
@@ -386,4 +391,4 @@ export function Kitchen() {
       </div>
     </div>
   );
-} 
+}

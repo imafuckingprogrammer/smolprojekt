@@ -1,8 +1,10 @@
 import { useEffect, useState, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { useInitialSetup } from '../../hooks/useInitialSetup';
 import { supabase } from '../../lib/supabase';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
+import { DashboardSkeleton } from '../ui/SkeletonLoader';
 import { formatCurrency } from '../../lib/utils';
 import {
   ChartBarIcon,
@@ -24,21 +26,45 @@ interface DashboardStats {
 
 export const DashboardHome = memo(function DashboardHome() {
   const { restaurant } = useAuth();
+  useInitialSetup(); // Set up initial kitchen stations
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
 
   useEffect(() => {
     if (restaurant) {
+      // Check if we have cached data first
+      const cacheKey = `dashboard_${restaurant.id}`;
+      const cached = localStorage.getItem(cacheKey);
+      
+      if (cached) {
+        try {
+          const parsedCache = JSON.parse(cached);
+          if (Date.now() - parsedCache.timestamp < 2 * 60 * 1000) { // 2 minute cache
+            setStats(parsedCache.stats);
+            setRecentOrders(parsedCache.recentOrders);
+            setLoading(false);
+            
+            // Fetch fresh data in background
+            fetchDashboardData(true);
+            return;
+          }
+        } catch (error) {
+          console.warn('Failed to parse dashboard cache:', error);
+        }
+      }
+      
       fetchDashboardData();
     }
   }, [restaurant]);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (isBackgroundUpdate = false) => {
     if (!restaurant) return;
 
     try {
-      setLoading(true);
+      if (!isBackgroundUpdate) {
+        setLoading(true);
+      }
 
       // Get today's date boundaries
       const today = new Date();
@@ -85,7 +111,7 @@ export const DashboardHome = memo(function DashboardHome() {
           new Date(order.created_at) >= today && new Date(order.created_at) < tomorrow
         );
 
-        const stats: DashboardStats = {
+        const newStats: DashboardStats = {
           totalOrders: orders.length,
           todayOrders: todayOrders.length,
           totalRevenue: orders.reduce((sum, order) => sum + order.total_amount, 0),
@@ -97,8 +123,20 @@ export const DashboardHome = memo(function DashboardHome() {
           ).length,
         };
 
-        setStats(stats);
+        setStats(newStats);
         setRecentOrders(recentOrdersData || []);
+
+        // Cache the data
+        const cacheKey = `dashboard_${restaurant.id}`;
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify({
+            stats: newStats,
+            recentOrders: recentOrdersData || [],
+            timestamp: Date.now()
+          }));
+        } catch (error) {
+          console.warn('Failed to cache dashboard data:', error);
+        }
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -108,11 +146,7 @@ export const DashboardHome = memo(function DashboardHome() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-96">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   return (

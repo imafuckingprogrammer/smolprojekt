@@ -2,6 +2,7 @@ import { useState, useEffect, memo } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
+import { MenuSkeleton } from '../ui/SkeletonLoader';
 import { formatCurrency } from '../../lib/utils';
 import type { MenuCategory, MenuItem } from '../../types/database';
 import {
@@ -349,11 +350,7 @@ export const MenuManagement = memo(function MenuManagement() {
   };
 
   if (loading) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-96">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <MenuSkeleton />;
   }
 
   return (

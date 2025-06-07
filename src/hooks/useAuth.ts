@@ -4,6 +4,16 @@ import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Restaurant } from '../types/database';
 
+// Cache keys
+const AUTH_CACHE_KEY = 'tabledirect_auth_cache';
+const RESTAURANT_CACHE_KEY = 'tabledirect_restaurant_cache';
+
+interface AuthCache {
+  user: User | null;
+  restaurant: Restaurant | null;
+  timestamp: number;
+}
+
 export interface AuthState {
   user: User | null;
   session: Session | null;
@@ -20,14 +30,68 @@ export interface AuthActions {
   clearError: () => void;
 }
 
+// Helper functions for cache management
+const getAuthCache = (): AuthCache | null => {
+  try {
+    const cached = localStorage.getItem(AUTH_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      // Cache valid for 5 minutes
+      if (Date.now() - parsed.timestamp < 5 * 60 * 1000) {
+        return parsed;
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to read auth cache:', error);
+  }
+  return null;
+};
+
+const setAuthCache = (user: User | null, restaurant: Restaurant | null) => {
+  try {
+    const cache: AuthCache = {
+      user,
+      restaurant,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(cache));
+  } catch (error) {
+    console.warn('Failed to set auth cache:', error);
+  }
+};
+
+const clearAuthCache = () => {
+  try {
+    localStorage.removeItem(AUTH_CACHE_KEY);
+    localStorage.removeItem(RESTAURANT_CACHE_KEY);
+  } catch (error) {
+    console.warn('Failed to clear auth cache:', error);
+  }
+};
+
 export function useAuth(): AuthState & AuthActions {
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    session: null,
-    restaurant: null,
-    loading: true,
-    error: null,
-  });
+  // Initialize with cached data for instant loading
+  const initializeWithCache = () => {
+    const cached = getAuthCache();
+    if (cached) {
+      return {
+        user: cached.user,
+        session: null, // Will be updated when session loads
+        restaurant: cached.restaurant,
+        loading: false, // Start with false since we have cached data
+        error: null,
+      };
+    }
+    return {
+      user: null,
+      session: null,
+      restaurant: null,
+      loading: true,
+      error: null,
+    };
+  };
+
+  const [state, setState] = useState<AuthState>(initializeWithCache());
 
   useEffect(() => {
     let mounted = true;
@@ -36,13 +100,16 @@ export function useAuth(): AuthState & AuthActions {
     // Get initial session
     const initializeAuth = async () => {
       try {
+        // If we have cached data, verify it in background
+        const cached = getAuthCache();
+        
         // Set a timeout to prevent infinite loading
         timeoutId = setTimeout(() => {
           if (mounted) {
             console.warn('Auth initialization timed out');
             setState(prev => ({ ...prev, loading: false, error: 'Authentication timed out' }));
           }
-                 }, 5000); // 5 second timeout
+        }, 3000); // Reduced to 3 seconds
 
         const { data: { session } } = await supabase.auth.getSession();
         
@@ -51,9 +118,22 @@ export function useAuth(): AuthState & AuthActions {
         setState(prev => ({ ...prev, session, user: session?.user ?? null }));
         
         if (session?.user) {
-          await fetchRestaurant(session.user.id);
+          // If we have cached restaurant and user matches, use it immediately
+          if (cached && cached.user?.id === session.user.id && cached.restaurant) {
+            setState(prev => ({ 
+              ...prev, 
+              user: session.user, 
+              restaurant: cached.restaurant,
+              loading: false 
+            }));
+            // Verify restaurant data in background
+            fetchRestaurant(session.user.id, true);
+          } else {
+            await fetchRestaurant(session.user.id);
+          }
         } else {
           setState(prev => ({ ...prev, loading: false }));
+          clearAuthCache();
         }
         
         // Clear timeout if successful
@@ -84,6 +164,7 @@ export function useAuth(): AuthState & AuthActions {
           await fetchRestaurant(session.user.id);
         } else {
           setState(prev => ({ ...prev, restaurant: null, loading: false }));
+          clearAuthCache();
         }
       }
     );
@@ -97,11 +178,11 @@ export function useAuth(): AuthState & AuthActions {
     };
   }, []);
 
-  const fetchRestaurant = useCallback(async (userId: string) => {
+  const fetchRestaurant = useCallback(async (userId: string, isBackgroundUpdate = false) => {
     try {
       // Set a timeout for the restaurant fetch
       const timeoutPromise = new Promise((_, reject) => {
-                 setTimeout(() => reject(new Error('Restaurant fetch timed out')), 3000);
+        setTimeout(() => reject(new Error('Restaurant fetch timed out')), 2000); // Reduced to 2 seconds
       });
 
       const fetchPromise = supabase
@@ -118,16 +199,23 @@ export function useAuth(): AuthState & AuthActions {
         }
         // Restaurant not found, user needs to complete onboarding
         setState(prev => ({ ...prev, restaurant: null, loading: false }));
+        clearAuthCache();
       } else {
         setState(prev => ({ ...prev, restaurant: data, loading: false }));
+        // Cache the successful auth state
+        setAuthCache(state.user, data);
       }
     } catch (error) {
       console.error('Error fetching restaurant:', error);
-      setState(prev => ({ 
-        ...prev, 
-        error: 'Failed to load restaurant data',
-        loading: false 
-      }));
+      
+      // Don't show error for background updates
+      if (!isBackgroundUpdate) {
+        setState(prev => ({ 
+          ...prev, 
+          error: 'Failed to load restaurant data',
+          loading: false 
+        }));
+      }
     }
   }, []);
 
