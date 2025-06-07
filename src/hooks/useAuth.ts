@@ -191,14 +191,28 @@ export function useAuth(): AuthState & AuthActions {
         setTimeout(() => reject(new Error('Restaurant fetch timed out')), 5000); // Increased to 5 seconds
       });
 
-      // First, find restaurants where the user has access (simplified for now - get first restaurant)
-      const fetchPromise = supabase
+      // First, try to find restaurant owned by user, fallback to first restaurant for now
+      let fetchPromise = supabase
         .from('restaurants')
         .select('*')
-        .limit(1)
-        .maybeSingle(); // Use maybeSingle instead of single to handle no results gracefully
-
-      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any;
+        .eq('owner_id', userId)
+        .maybeSingle();
+      
+      let { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any;
+      
+      // If no restaurant found by owner_id, fallback to first restaurant (for existing data)
+      if (!data && !error) {
+        console.log('No restaurant found by owner_id, trying fallback...');
+        fetchPromise = supabase
+          .from('restaurants')
+          .select('*')
+          .limit(1)
+          .maybeSingle();
+        
+        const fallbackResult = await Promise.race([fetchPromise, timeoutPromise]) as any;
+        data = fallbackResult.data;
+        error = fallbackResult.error;
+      }
 
       if (error) {
         console.error('Restaurant fetch error:', error);

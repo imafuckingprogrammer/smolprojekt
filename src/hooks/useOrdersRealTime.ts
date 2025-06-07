@@ -180,21 +180,21 @@ export function useOrdersRealTime() {
     if (!restaurant) return null;
 
     try {
-      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const sessionToken = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       console.log('🔥 Attempting to create session:', {
-        sessionId,
         restaurant_id: restaurant.id,
-        user_name: userName
+        user_name: userName,
+        session_token: sessionToken
       });
 
       const { data, error } = await supabase
         .from('active_sessions')
         .insert({
-          id: sessionId,
+          // Remove custom ID - let database generate UUID
           restaurant_id: restaurant.id,
-          user_name: userName,
-          session_token: sessionId,
+          user_name: userName.trim(),
+          session_token: sessionToken,
           status: 'active',
           last_seen: new Date().toISOString()
         })
@@ -207,8 +207,8 @@ export function useOrdersRealTime() {
       }
       
       console.log('✅ Session created successfully:', data);
-      setCurrentSessionId(sessionId);
-      return sessionId;
+      setCurrentSessionId(data.id); // Use database-generated ID
+      return data.id;
     } catch (err) {
       console.error('❌ Error creating session:', err);
       setError(err instanceof Error ? err.message : 'Failed to create session');

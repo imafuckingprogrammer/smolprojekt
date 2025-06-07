@@ -34,13 +34,16 @@ CREATE TABLE order_assignments (
 );
 
 -- 1. Add missing columns to existing tables
-ALTER TABLE orders ADD COLUMN claimed_by UUID REFERENCES active_sessions(id);
-ALTER TABLE orders ADD COLUMN claimed_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE orders ADD COLUMN auto_priority INTEGER DEFAULT 5;
-ALTER TABLE orders ADD COLUMN prep_time_estimate INTEGER DEFAULT 15;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS claimed_by UUID REFERENCES active_sessions(id);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS auto_priority INTEGER DEFAULT 5;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS prep_time_estimate INTEGER DEFAULT 15;
 
-ALTER TABLE order_items ADD COLUMN started_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE order_items ADD COLUMN completed_at TIMESTAMP WITH TIME ZONE;
+-- Add restaurant-user relationship
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id);
+
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE;
 
 -- Order Priority & Complexity (keep existing columns if they exist)
 ALTER TABLE orders ADD COLUMN priority INTEGER DEFAULT 5; -- 1-10 scale

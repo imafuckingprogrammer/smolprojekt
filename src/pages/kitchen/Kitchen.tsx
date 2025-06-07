@@ -499,9 +499,9 @@ function OrderCard({ order, statusColor, actionButtons, claimerInfo }: OrderCard
               <span className="font-medium">{item.quantity}x</span>{' '}
               <span>{item.menu_item?.name || 'Unknown Item'}</span>
             </div>
-            <span className="text-gray-500">
-              {formatCurrency(item.price * item.quantity)}
-            </span>
+                         <span className="text-gray-500">
+               {formatCurrency(item.unit_price * item.quantity)}
+             </span>
           </div>
         ))}
       </div>

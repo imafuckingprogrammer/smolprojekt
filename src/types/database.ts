@@ -120,7 +120,6 @@ export interface OrderItem {
   menu_item_id: string;
   quantity: number;
   unit_price: number;
-  price: number; // Alias for unit_price for compatibility
   special_instructions?: string;
   item_status: 'pending' | 'preparing' | 'ready';
   assigned_chef?: string;
