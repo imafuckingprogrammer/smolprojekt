@@ -1,268 +1,212 @@
-import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useStaffStore } from '../stores/staffStore';
 import { useSessionStore } from '../stores/sessionStore';
 
-export type UserRoleType = 'owner' | 'kitchen' | 'customer';
+export type UserRole = 'customer' | 'owner' | 'staff' | 'kitchen';
 
-export interface UserRole {
-  type: UserRoleType;
-  permissions: string[];
-  sessionId?: string;
-  userName?: string;
-  email?: string;
-  staffInfo?: {
-    name: string;
-    role: 'kitchen' | 'server' | 'manager';
-  };
-}
-
-export interface UserRoleContextType {
-  userRole: UserRole | null;
-  switchToKitchen: (userName: string) => Promise<boolean>;
-  switchToOwner: () => void;
-  switchToCustomer: () => void;
-  leaveCurrentRole: () => Promise<void>;
-  loading: boolean;
-  error: string | null;
+interface UserRoleContextType {
+  currentRole: UserRole;
   canAccessKitchen: boolean;
+  canManageStaff: boolean;
+  canManageOrders: boolean;
+  staffInfo: any | null;
+  switchToRole: (role: UserRole) => Promise<boolean>;
+  createKitchenSession: (userName?: string) => Promise<boolean>;
+  leaveKitchen: () => Promise<void>;
+  isLoading: boolean;
 }
 
 const UserRoleContext = createContext<UserRoleContextType | undefined>(undefined);
 
-// Role definitions with permissions
-const ROLE_PERMISSIONS = {
-  owner: [
-    'manage_menu',
-    'view_analytics', 
-    'manage_tables',
-    'manage_restaurant',
-    'view_orders',
-    'update_order_status',
-    'manage_staff'
-  ],
-  kitchen: [
-    'view_orders',
-    'update_order_status',
-    'claim_orders',
-    'release_orders'
-  ],
-  customer: [
-    'view_menu',
-    'place_order',
-    'view_own_orders'
-  ]
-} as const;
+interface UserRoleProviderProps {
+  children: ReactNode;
+}
 
-export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export function UserRoleProvider({ children }: UserRoleProviderProps) {
   const { user, restaurant } = useAuth();
-  const [userRole, setUserRole] = useState<UserRole | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  // Zustand stores
   const { isStaffMember, getStaffByEmail } = useStaffStore();
-  const { 
-    createSession, 
-    endSession, 
-    currentSession, 
-    loading: sessionLoading,
-    error: sessionError 
-  } = useSessionStore();
+  const { currentSession, createSession, endSession, loading: sessionLoading } = useSessionStore();
+  
+  const [currentRole, setCurrentRole] = useState<UserRole>('customer');
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Calculate if user can access kitchen
-  const canAccessKitchen = Boolean(
-    (user && restaurant && user.email === restaurant.email) || // Owner
-    (user && restaurant && user.email && isStaffMember(user.email, restaurant.id)) // Staff member
-  );
+  // Determine user permissions
+  const isOwner = Boolean(user && restaurant && user.email === restaurant.email);
+  const staffInfo = user?.email && restaurant ? getStaffByEmail(user.email, restaurant.id) : null;
+  const isStaff = Boolean(user && restaurant && staffInfo);
 
-  // Clear error after 5 seconds
+  // Calculate capabilities
+  const canAccessKitchen = isOwner || isStaff;
+  const canManageStaff = isOwner;
+  const canManageOrders = isOwner || isStaff;
+
+  // Auto-determine role on auth changes
   useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [error]);
-
-  // Auto-switch to owner role if user is authenticated and owns restaurant
-  useEffect(() => {
-    if (user && restaurant && user.email === restaurant.email && !userRole) {
-      switchToOwner();
-    } else if (!user && userRole) {
-      // Clear role if user logs out
-      setUserRole(null);
-    }
-  }, [user, restaurant, userRole]);
-
-  // Sync session errors with local state
-  useEffect(() => {
-    if (sessionError) {
-      setError(sessionError);
-    }
-  }, [sessionError]);
-
-  const switchToKitchen = async (userName: string): Promise<boolean> => {
-    if (!restaurant?.id) {
-      setError('No restaurant context available.');
-      return false;
+    if (!user || !restaurant) {
+      setCurrentRole('customer');
+      return;
     }
 
-    if (!userName.trim()) {
-      setError('Username is required to join kitchen.');
-      return false;
+    if (currentSession) {
+      setCurrentRole('kitchen');
+    } else if (isOwner) {
+      setCurrentRole('owner');
+    } else if (isStaff) {
+      setCurrentRole('staff');
+    } else {
+      setCurrentRole('customer');
     }
+  }, [user, restaurant, isOwner, isStaff, currentSession]);
 
-    if (!canAccessKitchen) {
-      setError('You are not authorized to access the kitchen.');
-      return false;
-    }
+  const switchToRole = async (role: UserRole): Promise<boolean> => {
+    if (!user || !restaurant) return false;
 
-    setLoading(true);
-    setError(null);
+    setIsLoading(true);
 
     try {
-      console.log('🔥 Switching to kitchen role:', { userName, restaurantId: restaurant.id });
-      
-      // End any existing session first
+      switch (role) {
+        case 'kitchen':
+          if (!canAccessKitchen) {
+            console.error('User does not have kitchen access');
+            return false;
+          }
+          return await createKitchenSession();
+
+        case 'owner':
+          if (!isOwner) {
+            console.error('User is not restaurant owner');
+            return false;
+          }
+          if (currentSession) {
+            await endSession();
+          }
+          setCurrentRole('owner');
+          return true;
+
+        case 'staff':
+          if (!isStaff) {
+            console.error('User is not staff member');
+            return false;
+          }
+          if (currentSession) {
+            await endSession();
+          }
+          setCurrentRole('staff');
+          return true;
+
+        case 'customer':
+          if (currentSession) {
+            await endSession();
+          }
+          setCurrentRole('customer');
+          return true;
+
+        default:
+          console.error('Unknown role:', role);
+          return false;
+      }
+    } catch (error) {
+      console.error('Error switching roles:', error);
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const createKitchenSession = async (userName?: string): Promise<boolean> => {
+    if (!user || !restaurant || !canAccessKitchen) {
+      console.error('Cannot create kitchen session - insufficient permissions');
+      return false;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // End existing session first
       if (currentSession) {
         await endSession();
       }
 
+      // Determine username
+      const sessionUserName = userName || 
+        staffInfo?.name || 
+        user.email?.split('@')[0] || 
+        'Kitchen User';
+
       // Create new kitchen session
       const sessionId = await createSession({
         restaurantId: restaurant.id,
-        userName: userName.trim(),
-        email: user?.email
+        userName: sessionUserName,
+        email: user.email
       });
 
       if (sessionId) {
-        // Get staff info if available
-        const staffInfo = user?.email ? getStaffByEmail(user.email, restaurant.id) : null;
-        
-        const newRole: UserRole = {
-          type: 'kitchen',
-          permissions: [...ROLE_PERMISSIONS.kitchen],
-          sessionId,
-          userName: userName.trim(),
-          email: user?.email,
-          staffInfo: staffInfo ? {
-            name: staffInfo.name,
-            role: staffInfo.role
-          } : undefined
-        };
-
-        setUserRole(newRole);
-        console.log('✅ Successfully switched to kitchen role');
+        console.log('✅ Kitchen session created:', sessionId);
+        setCurrentRole('kitchen');
         return true;
       } else {
-        setError('Failed to create kitchen session.');
+        console.error('❌ Failed to create kitchen session');
         return false;
       }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to join kitchen';
-      console.error('❌ Error switching to kitchen:', err);
-      setError(errorMessage);
+    } catch (error) {
+      console.error('❌ Error creating kitchen session:', error);
       return false;
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  const switchToOwner = () => {
-    if (!user || !restaurant) {
-      setError('Authentication required for owner role.');
-      return;
-    }
-
-    if (restaurant.email !== user.email) {
-      setError('You are not authorized as the restaurant owner.');
-      return;
-    }
-
-    const newRole: UserRole = {
-      type: 'owner',
-      permissions: [...ROLE_PERMISSIONS.owner],
-      email: user.email
-    };
-
-    setUserRole(newRole);
-    console.log('✅ Switched to owner role');
-  };
-
-  const switchToCustomer = () => {
-    const newRole: UserRole = {
-      type: 'customer',
-      permissions: [...ROLE_PERMISSIONS.customer]
-    };
-
-    setUserRole(newRole);
-    console.log('✅ Switched to customer role');
-  };
-
-  const leaveCurrentRole = async (): Promise<void> => {
-    if (!userRole) return;
-
-    setLoading(true);
-    setError(null);
-
+  const leaveKitchen = async (): Promise<void> => {
+    setIsLoading(true);
+    
     try {
-      // If leaving kitchen role, clean up session
-      if (userRole.type === 'kitchen' && currentSession) {
-        console.log('🔥 Leaving kitchen session:', currentSession.id);
+      if (currentSession) {
         await endSession();
       }
-
-      setUserRole(null);
-      console.log('✅ Left current role successfully');
-    } catch (err) {
-      console.error('❌ Error leaving role:', err);
-      setError('Failed to leave role cleanly, but local state cleared.');
-      setUserRole(null); // Clear anyway
+      
+      // Return to default role
+      if (isOwner) {
+        setCurrentRole('owner');
+      } else if (isStaff) {
+        setCurrentRole('staff');
+      } else {
+        setCurrentRole('customer');
+      }
+      
+      console.log('✅ Left kitchen successfully');
+    } catch (error) {
+      console.error('❌ Error leaving kitchen:', error);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  const value: UserRoleContextType = {
-    userRole,
-    switchToKitchen,
-    switchToOwner,
-    switchToCustomer,
-    leaveCurrentRole,
-    loading: loading || sessionLoading,
-    error,
-    canAccessKitchen
+  const contextValue: UserRoleContextType = {
+    currentRole,
+    canAccessKitchen,
+    canManageStaff,
+    canManageOrders,
+    staffInfo,
+    switchToRole,
+    createKitchenSession,
+    leaveKitchen,
+    isLoading: isLoading || sessionLoading
   };
 
   return (
-    <UserRoleContext.Provider value={value}>
+    <UserRoleContext.Provider value={contextValue}>
       {children}
     </UserRoleContext.Provider>
   );
-};
+}
 
-export const useUserRole = (): UserRoleContextType => {
+export function useUserRole(): UserRoleContextType {
   const context = useContext(UserRoleContext);
   if (context === undefined) {
     throw new Error('useUserRole must be used within a UserRoleProvider');
   }
   return context;
-};
+}
 
-export const hasPermission = (userRole: UserRole | null, permission: string): boolean => {
-  if (!userRole) return false;
-  return userRole.permissions.includes(permission);
-};
-
-export const requiresRole = (allowedRoles: UserRoleType[]) => {
-  return (userRole: UserRole | null): boolean => {
-    if (!userRole) return false;
-    return allowedRoles.includes(userRole.type);
-  };
-};
-
-export const requiresPermission = (permission: string) => {
-  return (userRole: UserRole | null): boolean => {
-    return hasPermission(userRole, permission);
-  };
-}; 
+// Legacy helper functions removed - use context values instead 

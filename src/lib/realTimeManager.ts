@@ -1,296 +1,169 @@
 import { supabase } from './supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
-type CallbackFunction = (payload: any) => void;
+/**
+ * Ultra-simplified Real-time Manager
+ * No singleton pattern, no complex state management, just simple subscriptions
+ */
 
-interface SubscriptionManager {
-  channel: RealtimeChannel;
-  listeners: Map<string, CallbackFunction>;
-  lastActivity: Date;
-  subscriptionType: string;
-  restaurantId: string;
+let subscriptionCounter = 0;
+
+/**
+ * Create a simple subscription for orders
+ */
+export function subscribeToOrders(restaurantId: string, callback: (payload: any) => void): () => void {
+  const subscriptionId = `orders_${restaurantId}_${++subscriptionCounter}`;
+  
+  console.log(`🔥 Creating order subscription: ${subscriptionId}`);
+  
+  const channel = supabase
+    .channel(subscriptionId)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'orders',
+      filter: `restaurant_id=eq.${restaurantId}`
+    }, (payload) => {
+      console.log('📦 Order update:', payload.eventType);
+      try {
+        callback(payload);
+      } catch (error) {
+        console.error('Error in order callback:', error);
+      }
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log(`✅ Order subscription active: ${subscriptionId}`);
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        console.log(`❌ Order subscription ${status.toLowerCase()}: ${subscriptionId}`);
+      }
+    });
+
+  // Return cleanup function
+  return () => {
+    console.log(`🧹 Cleaning up order subscription: ${subscriptionId}`);
+    try {
+      supabase.removeChannel(channel);
+    } catch (error) {
+      console.error('Error removing channel:', error);
+    }
+  };
 }
 
 /**
- * Singleton Real-time Manager to handle all Supabase real-time subscriptions
- * Fixed recursive call stack issue and simplified cleanup
+ * Create a simple subscription for sessions
  */
-class RealTimeManager {
-  private static instance: RealTimeManager;
-  private subscriptions: Map<string, SubscriptionManager> = new Map();
-  private listenerIdCounter = 0;
-  private isDestroying = false;
-
-  private constructor() {
-    // Private constructor for singleton pattern
-  }
-
-  static getInstance(): RealTimeManager {
-    if (!RealTimeManager.instance) {
-      RealTimeManager.instance = new RealTimeManager();
-    }
-    return RealTimeManager.instance;
-  }
-
-  /**
-   * Generate compound key to prevent collisions
-   */
-  private generateKey(type: string, restaurantId: string): string {
-    return `${type}:${restaurantId}`;
-  }
-
-  /**
-   * Generate unique listener ID
-   */
-  private generateListenerId(): string {
-    return `listener_${++this.listenerIdCounter}_${Date.now()}`;
-  }
-
-  /**
-   * Subscribe to order changes for a specific restaurant
-   */
-  subscribeToOrders(restaurantId: string, callback: CallbackFunction): () => void {
-    if (this.isDestroying) return () => {};
-    
-    const key = this.generateKey('orders', restaurantId);
-    const listenerId = this.generateListenerId();
-    
-    return this.subscribe(key, listenerId, callback, 'orders', restaurantId, () => {
-      return supabase
-        .channel(`orders_${restaurantId}`)
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'orders',
-          filter: `restaurant_id=eq.${restaurantId}`
-        }, (payload) => {
-          this.handlePayload(key, payload);
-        })
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'order_items'
-        }, (payload) => {
-          this.handlePayload(key, payload);
-        });
-    });
-  }
-
-  /**
-   * Subscribe to session changes for a specific restaurant
-   */
-  subscribeToSessions(restaurantId: string, callback: CallbackFunction): () => void {
-    if (this.isDestroying) return () => {};
-    
-    const key = this.generateKey('sessions', restaurantId);
-    const listenerId = this.generateListenerId();
-    
-    return this.subscribe(key, listenerId, callback, 'sessions', restaurantId, () => {
-      return supabase
-        .channel(`sessions_${restaurantId}`)
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'active_sessions',
-          filter: `restaurant_id=eq.${restaurantId}`
-        }, (payload) => {
-          this.handlePayload(key, payload);
-        });
-    });
-  }
-
-  /**
-   * Subscribe to menu changes for a specific restaurant
-   */
-  subscribeToMenu(restaurantId: string, callback: CallbackFunction): () => void {
-    if (this.isDestroying) return () => {};
-    
-    const key = this.generateKey('menu', restaurantId);
-    const listenerId = this.generateListenerId();
-    
-    return this.subscribe(key, listenerId, callback, 'menu', restaurantId, () => {
-      return supabase
-        .channel(`menu_${restaurantId}`)
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'menu_items',
-          filter: `restaurant_id=eq.${restaurantId}`
-        }, (payload) => {
-          this.handlePayload(key, payload);
-        })
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'menu_categories',
-          filter: `restaurant_id=eq.${restaurantId}`
-        }, (payload) => {
-          this.handlePayload(key, payload);
-        });
-    });
-  }
-
-  /**
-   * Handle payload and call all listeners
-   */
-  private handlePayload(key: string, payload: any) {
-    const manager = this.subscriptions.get(key);
-    if (manager && !this.isDestroying) {
-      manager.lastActivity = new Date();
-      manager.listeners.forEach((listener) => {
-        try {
-          listener(payload);
-        } catch (error) {
-          console.error('Error in real-time listener:', error);
-        }
-      });
-    }
-  }
-
-  /**
-   * Generic subscription method with simplified error handling
-   */
-  private subscribe(
-    key: string, 
-    listenerId: string,
-    callback: CallbackFunction,
-    subscriptionType: string,
-    restaurantId: string,
-    channelFactory: () => RealtimeChannel
-  ): () => void {
-    
-    if (this.isDestroying) return () => {};
-    
-    // Add listener to existing subscription
-    if (this.subscriptions.has(key)) {
-      const manager = this.subscriptions.get(key)!;
-      manager.listeners.set(listenerId, callback);
-      manager.lastActivity = new Date();
-      
-      console.log(`✅ Added listener to existing subscription: ${key}`);
-      
-    } else {
-      // Create new subscription
+export function subscribeToSessions(restaurantId: string, callback: (payload: any) => void): () => void {
+  const subscriptionId = `sessions_${restaurantId}_${++subscriptionCounter}`;
+  
+  console.log(`🔥 Creating session subscription: ${subscriptionId}`);
+  
+  const channel = supabase
+    .channel(subscriptionId)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'active_sessions',
+      filter: `restaurant_id=eq.${restaurantId}`
+    }, (payload) => {
+      console.log('👥 Session update:', payload.eventType);
       try {
-        const channel = channelFactory();
-        const manager: SubscriptionManager = {
-          channel,
-          listeners: new Map([[listenerId, callback]]),
-          lastActivity: new Date(),
-          subscriptionType,
-          restaurantId
-        };
-        
-        // Subscribe with simple error handling
-        channel.subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            console.log(`✅ Created real-time subscription: ${key}`);
-          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-            console.log(`❌ Subscription ${status.toLowerCase()}: ${key}`);
-            // Don't attempt automatic recovery to avoid recursion
-          }
-        });
-        
-        this.subscriptions.set(key, manager);
-        
+        callback(payload);
       } catch (error) {
-        console.error(`Failed to create subscription ${key}:`, error);
-        return () => {}; // Return empty cleanup function
+        console.error('Error in session callback:', error);
       }
-    }
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log(`✅ Session subscription active: ${subscriptionId}`);
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        console.log(`❌ Session subscription ${status.toLowerCase()}: ${subscriptionId}`);
+      }
+    });
 
-    // Return cleanup function
-    return () => {
-      this.unsubscribe(key, listenerId);
-    };
-  }
-
-  /**
-   * Remove a specific callback from a subscription
-   */
-  private unsubscribe(key: string, listenerId: string): void {
-    if (this.isDestroying) return;
-    
-    const manager = this.subscriptions.get(key);
-    if (!manager) return;
-
-    manager.listeners.delete(listenerId);
-    console.log(`🗑️ Removed listener ${listenerId} from ${key}`);
-
-    // If no more listeners, cleanup immediately
-    if (manager.listeners.size === 0) {
-      this.cleanupSubscription(key);
-    }
-  }
-
-  /**
-   * Clean up a subscription - simplified to avoid recursion
-   */
-  private cleanupSubscription(key: string): void {
-    if (this.isDestroying) return;
-    
-    const manager = this.subscriptions.get(key);
-    if (!manager || manager.listeners.size > 0) return;
-
+  // Return cleanup function
+  return () => {
+    console.log(`🧹 Cleaning up session subscription: ${subscriptionId}`);
     try {
-      // Simple synchronous cleanup
-      supabase.removeChannel(manager.channel);
-      this.subscriptions.delete(key);
-      console.log(`🧹 Cleaned up real-time subscription: ${key}`);
+      supabase.removeChannel(channel);
     } catch (error) {
-      console.error(`Failed to cleanup subscription ${key}:`, error);
-      // Still remove from our map even if Supabase cleanup failed
-      this.subscriptions.delete(key);
+      console.error('Error removing channel:', error);
     }
-  }
+  };
+}
 
-  /**
-   * Force cleanup of all subscriptions - simplified
-   */
-  async destroyAll(): Promise<void> {
-    this.isDestroying = true;
-    console.log('🧹 Destroying all real-time subscriptions...');
-    
-    try {
-      // Simple cleanup without recursion
-      for (const [key, manager] of this.subscriptions) {
-        try {
-          supabase.removeChannel(manager.channel);
-        } catch (error) {
-          console.error(`Failed to cleanup subscription ${key}:`, error);
-        }
+/**
+ * Create a simple subscription for menu items
+ */
+export function subscribeToMenu(restaurantId: string, callback: (payload: any) => void): () => void {
+  const subscriptionId = `menu_${restaurantId}_${++subscriptionCounter}`;
+  
+  console.log(`🔥 Creating menu subscription: ${subscriptionId}`);
+  
+  const channel = supabase
+    .channel(subscriptionId)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'menu_items',
+      filter: `restaurant_id=eq.${restaurantId}`
+    }, (payload) => {
+      console.log('🍽️ Menu update:', payload.eventType);
+      try {
+        callback(payload);
+      } catch (error) {
+        console.error('Error in menu callback:', error);
       }
-      
-      this.subscriptions.clear();
-      console.log('🧹 All real-time subscriptions destroyed');
-    } finally {
-      this.isDestroying = false;
+    })
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'menu_categories',
+      filter: `restaurant_id=eq.${restaurantId}`
+    }, (payload) => {
+      console.log('📂 Menu category update:', payload.eventType);
+      try {
+        callback(payload);
+      } catch (error) {
+        console.error('Error in menu category callback:', error);
+      }
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log(`✅ Menu subscription active: ${subscriptionId}`);
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        console.log(`❌ Menu subscription ${status.toLowerCase()}: ${subscriptionId}`);
+      }
+    });
+
+  // Return cleanup function
+  return () => {
+    console.log(`🧹 Cleaning up menu subscription: ${subscriptionId}`);
+    try {
+      supabase.removeChannel(channel);
+    } catch (error) {
+      console.error('Error removing channel:', error);
     }
-  }
+  };
+}
 
-  /**
-   * Get statistics about current subscriptions
-   */
-  getStats(): { 
-    totalSubscriptions: number;
-    subscriptionsByType: Record<string, number>;
-    totalListeners: number;
-  } {
-    const stats = {
-      totalSubscriptions: this.subscriptions.size,
-      subscriptionsByType: {} as Record<string, number>,
-      totalListeners: 0
-    };
-
-    for (const [, manager] of this.subscriptions) {
-      const type = manager.subscriptionType;
-      stats.subscriptionsByType[type] = (stats.subscriptionsByType[type] || 0) + 1;
-      stats.totalListeners += manager.listeners.size;
-    }
-
-    return stats;
+/**
+ * Emergency cleanup - remove all channels (use sparingly)
+ */
+export function cleanupAllSubscriptions(): void {
+  console.log('🚨 Emergency cleanup of all subscriptions');
+  try {
+    supabase.removeAllChannels();
+    console.log('✅ All subscriptions cleaned up');
+  } catch (error) {
+    console.error('Error during emergency cleanup:', error);
   }
 }
 
-export const realTimeManager = RealTimeManager.getInstance();
-export default realTimeManager; 
+// Legacy exports for backward compatibility
+export const realTimeManager = {
+  subscribeToOrders,
+  subscribeToSessions,
+  subscribeToMenu,
+  destroyAll: cleanupAllSubscriptions
+}; 

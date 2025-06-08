@@ -53,17 +53,41 @@ export function useKitchenOrders(restaurantId: string | null) {
     }
   }, [restaurantId]);
 
-  // Claim order
+  // Claim order - Direct SQL implementation
   const claimOrder = useCallback(async (orderId: string, sessionId: string): Promise<boolean> => {
     try {
       setError(null);
       
-      const { data, error } = await supabase.rpc('claim_order', {
-        order_uuid: orderId,
-        session_uuid: sessionId
-      });
+      // Use atomic update with conditional where clause to prevent race conditions
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ 
+          claimed_by: sessionId,
+          claimed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId)
+        .is('claimed_by', null) // Only update if not already claimed
+        .select('id')
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Claim order error:', error);
+        
+        // Check if order is already claimed
+        const { data: orderCheck } = await supabase
+          .from('orders')
+          .select('id, claimed_by, claimed_session:active_sessions(user_name)')
+          .eq('id', orderId)
+          .single();
+
+        if (orderCheck?.claimed_by) {
+          setError('Order already claimed by another staff member');
+        } else {
+          setError('Failed to claim order');
+        }
+        return false;
+      }
       
       if (data) {
         console.log('✅ Order claimed:', orderId);
@@ -81,24 +105,36 @@ export function useKitchenOrders(restaurantId: string | null) {
     }
   }, [fetchOrders]);
 
-  // Release order
+  // Release order - Direct SQL implementation
   const releaseOrder = useCallback(async (orderId: string, sessionId: string): Promise<boolean> => {
     try {
       setError(null);
       
-      const { data, error } = await supabase.rpc('release_order', {
-        order_uuid: orderId,
-        session_uuid: sessionId
-      });
+      // Only release if claimed by this session
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ 
+          claimed_by: null,
+          claimed_at: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId)
+        .eq('claimed_by', sessionId) // Only release if claimed by this session
+        .select('id')
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Release order error:', error);
+        setError('Failed to release order');
+        return false;
+      }
       
       if (data) {
         console.log('✅ Order released:', orderId);
         await fetchOrders(); // Refresh orders
         return true;
       } else {
-        setError('Failed to release order');
+        setError('Order not claimed by your session');
         return false;
       }
     } catch (err) {
@@ -109,11 +145,21 @@ export function useKitchenOrders(restaurantId: string | null) {
     }
   }, [fetchOrders]);
 
-  // Update order status
+  // Update order status with optimistic updates
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: string): Promise<boolean> => {
     try {
       setError(null);
       
+      // Optimistic update - update local state immediately
+      setOrders(prevOrders => 
+        prevOrders.map(order => 
+          order.id === orderId 
+            ? { ...order, status: newStatus as any, updated_at: new Date().toISOString() }
+            : order
+        )
+      );
+      
+      // Then update database
       const { error } = await supabase
         .from('orders')
         .update({ 
@@ -122,10 +168,19 @@ export function useKitchenOrders(restaurantId: string | null) {
         })
         .eq('id', orderId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Update order status error:', error);
+        
+        // Rollback optimistic update on error
+        await fetchOrders();
+        throw error;
+      }
       
       console.log('✅ Order status updated:', orderId, newStatus);
-      await fetchOrders(); // Refresh orders
+      
+      // Refresh to ensure consistency
+      setTimeout(() => fetchOrders(), 1000);
+      
       return true;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to update order status';
@@ -135,14 +190,46 @@ export function useKitchenOrders(restaurantId: string | null) {
     }
   }, [fetchOrders]);
 
-  // Start preparing (claim + set to preparing)
+  // Start preparing (claim + set to preparing) - Atomic operation
   const startPreparing = useCallback(async (orderId: string, sessionId: string): Promise<boolean> => {
-    const claimed = await claimOrder(orderId, sessionId);
-    if (claimed) {
-      return await updateOrderStatus(orderId, 'preparing');
+    try {
+      setError(null);
+      
+      // Atomic update: claim and set status in one operation
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ 
+          claimed_by: sessionId,
+          claimed_at: new Date().toISOString(),
+          status: 'preparing',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId)
+        .is('claimed_by', null) // Only if not already claimed
+        .select('id')
+        .single();
+
+      if (error) {
+        console.error('Start preparing error:', error);
+        setError('Failed to start preparing - order may be claimed by someone else');
+        return false;
+      }
+      
+      if (data) {
+        console.log('✅ Order preparation started:', orderId);
+        await fetchOrders();
+        return true;
+      } else {
+        setError('Order already claimed by someone else');
+        return false;
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to start preparing order';
+      setError(errorMessage);
+      console.error('❌ Error starting preparation:', err);
+      return false;
     }
-    return false;
-  }, [claimOrder, updateOrderStatus]);
+  }, [fetchOrders]);
 
   // Mark ready
   const markReady = useCallback(async (orderId: string): Promise<boolean> => {
@@ -154,12 +241,19 @@ export function useKitchenOrders(restaurantId: string | null) {
     return await updateOrderStatus(orderId, 'served');
   }, [updateOrderStatus]);
 
+  // Group orders by status
+  const groupedOrders = {
+    pending: orders.filter(order => order.status === 'pending'),
+    preparing: orders.filter(order => order.status === 'preparing'),
+    ready: orders.filter(order => order.status === 'ready')
+  };
+
   // Initial load
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
 
-  // Real-time subscription
+  // Real-time subscription with improved error handling
   useEffect(() => {
     if (!restaurantId) return;
 
@@ -170,7 +264,7 @@ export function useKitchenOrders(restaurantId: string | null) {
       supabase.removeChannel(channelRef.current);
     }
 
-    // Create new channel
+    // Create new channel with unique name
     const channel = supabase
       .channel(`kitchen_orders_${restaurantId}_${Date.now()}`)
       .on(
@@ -183,7 +277,9 @@ export function useKitchenOrders(restaurantId: string | null) {
         },
         (payload) => {
           console.log('🔥 Real-time order change:', payload.eventType);
-          fetchOrders(); // Simple refresh - could be optimized
+          
+          // Debounced refresh to avoid too many calls
+          setTimeout(() => fetchOrders(), 500);
         }
       )
       .on(
@@ -196,30 +292,30 @@ export function useKitchenOrders(restaurantId: string | null) {
         },
         (payload) => {
           console.log('🔥 Real-time session change:', payload.eventType);
-          fetchOrders(); // Refresh to update claimed_session data
+          
+          // Refresh to update claimed_session data
+          setTimeout(() => fetchOrders(), 500);
         }
       )
       .subscribe((status) => {
-        console.log('🔥 Real-time subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time kitchen subscription active');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time kitchen subscription error');
+        }
       });
 
     channelRef.current = channel;
 
+    // Cleanup on unmount
     return () => {
-      console.log('🔥 Cleaning up orders subscription');
       if (channelRef.current) {
+        console.log('🧹 Cleaning up kitchen real-time subscription');
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
     };
   }, [restaurantId, fetchOrders]);
-
-  // Group orders by status
-  const groupedOrders = {
-    pending: orders.filter(order => order.status === 'pending'),
-    preparing: orders.filter(order => order.status === 'preparing'),
-    ready: orders.filter(order => order.status === 'ready')
-  };
 
   return {
     orders,
@@ -229,9 +325,9 @@ export function useKitchenOrders(restaurantId: string | null) {
     fetchOrders,
     claimOrder,
     releaseOrder,
-    updateOrderStatus,
     startPreparing,
     markReady,
-    markServed
+    markServed,
+    updateOrderStatus
   };
 } 
