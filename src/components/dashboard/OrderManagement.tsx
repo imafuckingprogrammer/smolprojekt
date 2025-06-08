@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useOrdersRealTime } from '../../hooks/useOrdersRealTime';
+import { supabase } from '../../lib/supabase';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { formatCurrency, formatDate, getOrderAge, getOrderAgeColor } from '../../lib/utils';
 import type { OrderWithItems } from '../../types/database';
@@ -12,26 +12,109 @@ import {
 } from '@heroicons/react/24/outline';
 
 export function OrderManagement() {
-  const { restaurant } = useAuth();
-  const { orders, loading, updateOrderStatus, refetch: fetchOrders } = useOrdersRealTime();
+  const { restaurant, user } = useAuth();
+  const [orders, setOrders] = useState<OrderWithItems[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedOrder, setSelectedOrder] = useState<OrderWithItems | null>(null);
 
-  useEffect(() => {
-    if (restaurant) {
-      fetchOrders();
-    }
-  }, [restaurant]); // Removed fetchOrders to prevent infinite loops
+  // Fetch orders function
+  const fetchOrders = async () => {
+    if (!restaurant?.id) return;
 
-  const handleStatusUpdate = async (orderId: string, newStatus: any) => {
     try {
-      await updateOrderStatus(orderId, newStatus);
-      // Optionally refresh the orders
-      if (restaurant) {
-        fetchOrders();
+      setLoading(true);
+      setError(null);
+      
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          order_items!inner(
+            *,
+            menu_item:menu_items(*)
+          ),
+          restaurant_table:restaurant_tables(*),
+          claimed_session:active_sessions(user_name)
+        `)
+        .eq('restaurant_id', restaurant.id)
+        .in('status', ['pending', 'preparing', 'ready', 'served', 'cancelled'])
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setOrders(data || []);
+    } catch (err) {
+      console.error('Error fetching orders:', err);
+      setError('Failed to load orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load orders on mount and restaurant change
+  useEffect(() => {
+    fetchOrders();
+  }, [restaurant?.id]);
+
+  // Direct status update function for restaurant owners
+  const handleStatusUpdate = async (orderId: string, newStatus: string) => {
+    if (!restaurant?.id || !user?.id) {
+      setError('Authentication required');
+      return;
+    }
+
+    // Add order to updating set
+    setUpdating(prev => new Set([...prev, orderId]));
+    setError(null);
+
+    try {
+      console.log('🔄 Updating order status:', { orderId, newStatus, restaurant: restaurant.id });
+
+      // Direct database update for restaurant owners
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ 
+          status: newStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId)
+        .eq('restaurant_id', restaurant.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      console.log('✅ Order status updated successfully:', data);
+
+      // Update local state immediately
+      setOrders(prevOrders => 
+        prevOrders.map(order => 
+          order.id === orderId 
+            ? { ...order, status: newStatus as any, updated_at: new Date().toISOString() }
+            : order
+        )
+      );
+
+      // Update selectedOrder if it's the same one
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder(prev => prev ? { ...prev, status: newStatus as any } : null);
       }
-    } catch (error) {
-      console.error('Error updating order status:', error);
+
+      // Refresh orders after a short delay to ensure consistency
+      setTimeout(() => fetchOrders(), 1000);
+
+    } catch (err) {
+      console.error('❌ Error updating order status:', err);
+      setError(err instanceof Error ? err.message : 'Failed to update order status');
+    } finally {
+      // Remove order from updating set
+      setUpdating(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(orderId);
+        return newSet;
+      });
     }
   };
 
@@ -61,7 +144,21 @@ export function OrderManagement() {
             View and manage all incoming orders
           </p>
         </div>
+        <button
+          onClick={fetchOrders}
+          disabled={loading}
+          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+        >
+          {loading ? 'Loading...' : 'Refresh'}
+        </button>
       </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md">
+          <div className="text-red-800">{error}</div>
+        </div>
+      )}
 
       {/* Status Filter */}
       <div className="mb-6">
@@ -104,6 +201,7 @@ export function OrderManagement() {
           {filteredOrders.map((order) => {
             const orderAge = getOrderAge(order.created_at);
             const ageColorClass = getOrderAgeColor(orderAge);
+            const isUpdating = updating.has(order.id);
 
             return (
               <div
@@ -114,7 +212,7 @@ export function OrderManagement() {
                   order.status === 'ready' ? 'border-l-green-400' :
                   order.status === 'served' ? 'border-l-gray-400' :
                   'border-l-red-400'
-                } ${ageColorClass}`}
+                } ${ageColorClass} ${isUpdating ? 'opacity-75' : ''}`}
               >
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
@@ -187,12 +285,13 @@ export function OrderManagement() {
                     <select
                       value={order.status}
                       onChange={(e) => handleStatusUpdate(order.id, e.target.value)}
-                      className="input text-sm"
+                      disabled={isUpdating}
+                      className={`input text-sm ${isUpdating ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <option value={order.status}>
-                        {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                        {isUpdating ? 'Updating...' : order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                       </option>
-                      {getStatusOptions(order.status).map((status) => (
+                      {!isUpdating && getStatusOptions(order.status).map((status) => (
                         <option key={status} value={status}>
                           {status.charAt(0).toUpperCase() + status.slice(1)}
                         </option>
@@ -311,9 +410,9 @@ export function OrderManagement() {
                   value={selectedOrder.status}
                   onChange={(e) => {
                     handleStatusUpdate(selectedOrder.id, e.target.value);
-                    setSelectedOrder(prev => prev ? { ...prev, status: e.target.value as any } : null);
                   }}
-                  className="input"
+                  disabled={updating.has(selectedOrder.id)}
+                  className={`input ${updating.has(selectedOrder.id) ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <option value="pending">Pending</option>
                   <option value="preparing">Preparing</option>

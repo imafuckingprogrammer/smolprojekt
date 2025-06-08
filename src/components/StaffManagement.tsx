@@ -265,9 +265,9 @@ export function StaffManagement() {
         <div className="p-6 border-b border-gray-200">
           <div className="flex justify-between items-center">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">Staff Management</h3>
+              <h3 className="text-lg font-semibold text-gray-900">Staff Email Approval</h3>
               <p className="text-sm text-gray-600 mt-1">
-                Manage your restaurant staff for {restaurant.name}
+                Approve staff emails for {restaurant.name} - they can then create accounts and access the kitchen
               </p>
             </div>
             <button
@@ -275,7 +275,7 @@ export function StaffManagement() {
               className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
             >
               <span className="text-lg">+</span>
-              Invite Staff
+              Approve Email
             </button>
           </div>
         </div>
@@ -392,13 +392,19 @@ export function StaffManagement() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Invite Staff Member</h3>
+              <h3 className="text-lg font-semibold">Approve Staff Email</h3>
               <button 
                 onClick={() => setShowInviteForm(false)}
                 className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
               >
                 ×
               </button>
+            </div>
+            
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <p className="text-sm text-blue-800">
+                💡 Staff members can create accounts and access the kitchen once their email is approved here.
+              </p>
             </div>
             
             <form onSubmit={handleInviteSubmit} className="space-y-4">
@@ -458,7 +464,7 @@ export function StaffManagement() {
                   disabled={addStaffMutation.isPending}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {addStaffMutation.isPending ? 'Adding...' : 'Invite Staff'}
+                  {addStaffMutation.isPending ? 'Approving...' : 'Approve Email'}
                 </button>
               </div>
             </form>

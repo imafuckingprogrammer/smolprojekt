@@ -14,7 +14,7 @@ import { Kitchen } from './pages/kitchen/Kitchen';
 import { CustomerOrder } from './pages/order/CustomerOrder';
 import { OrderSuccess } from './pages/order/OrderSuccess';
 import { OrderError } from './pages/order/OrderError';
-import { TestMenu } from './pages/test/TestMenu';
+import { StaffAuth } from './pages/auth/StaffAuth';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { useEffect, useState } from 'react';
 
@@ -66,8 +66,8 @@ function AppContent() {
           <Route path="/order/:token/success" element={<OrderSuccess />} />
           <Route path="/order/:token/error" element={<OrderError />} />
           
-          {/* Test Route */}
-          <Route path="/test" element={<TestMenu />} />
+          {/* Staff Authentication */}
+          <Route path="/staff-auth" element={<StaffAuth />} />
           
           {/* Auth Routes */}
           <Route 
@@ -101,7 +101,7 @@ function AppContent() {
               <ProtectedRoute>
                 <Kitchen />
               </ProtectedRoute>
-            } 
+            }
           />
           
           {/* Default Redirects */}

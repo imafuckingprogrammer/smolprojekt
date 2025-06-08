@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useUserRole } from '../contexts/UserRoleContext';
 import { useStaffStore } from '../stores/staffStore';
-import { useSessionStore } from '../stores/sessionStore';
 import { supabase } from '../lib/supabase';
 import { CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
@@ -19,7 +18,6 @@ export const SystemStatus: React.FC = () => {
   const { restaurant } = useAuth();
   const { currentRole, staffInfo } = useUserRole();
   const { staffMembers } = useStaffStore();
-  const { currentSession } = useSessionStore();
 
   const runSystemChecks = async () => {
     const newChecks: SystemCheck[] = [];
@@ -42,7 +40,6 @@ export const SystemStatus: React.FC = () => {
         : 'No active role selected',
       details: currentRole ? [
         `Role: ${currentRole}`,
-        currentSession?.id ? `Session ID: ${currentSession.id.slice(0, 8)}...` : 'No session ID',
         staffInfo?.email ? `Email: ${staffInfo.email}` : 'No staff email'
       ] : undefined
     });
@@ -55,22 +52,7 @@ export const SystemStatus: React.FC = () => {
       details: staffMembers.map((s: any) => `${s.email} - ${s.role} (${s.isActive ? 'active' : 'inactive'})`)
     });
 
-    // 4. Session Store Check
-    newChecks.push({
-      name: 'Session Management',
-      status: currentSession ? 'pass' : 'warning',
-      message: currentSession 
-        ? `Active session: ${currentSession.userName}`
-        : 'No active session',
-      details: currentSession ? [
-        `Status: ${currentSession.status}`,
-        `Device: ${currentSession.deviceId}`,
-        `Claimed orders: ${currentSession.claimedOrderIds.length}`,
-        `Last activity: ${currentSession.lastActivity.toLocaleString()}`
-      ] : undefined
-    });
-
-    // 5. Database Connection Check
+    // 4. Database Connection Check
     try {
       const { data, error } = await supabase.from('restaurants').select('count').limit(1);
       newChecks.push({
@@ -86,7 +68,7 @@ export const SystemStatus: React.FC = () => {
       });
     }
 
-    // 6. Real-time Subscriptions Check
+    // 5. Real-time Subscriptions Check
     if (restaurant) {
       try {
         // Test subscription by listening for changes
@@ -119,12 +101,12 @@ export const SystemStatus: React.FC = () => {
       }
     }
 
-    // 7. Orders System Check
+    // 6. Orders System Check
     if (restaurant) {
       try {
         const { data: orderData, error: orderError } = await supabase
           .from('orders')
-          .select('id, status, claimed_by')
+          .select('id, status')
           .eq('restaurant_id', restaurant.id)
           .limit(5);
 
@@ -134,7 +116,7 @@ export const SystemStatus: React.FC = () => {
           message: orderError 
             ? `Orders query failed: ${orderError.message}`
             : `Orders system operational (${orderData?.length || 0} recent orders)`,
-          details: orderData?.map(o => `Order ${o.id.slice(0, 8)}: ${o.status}${o.claimed_by ? ' (claimed)' : ''}`)
+          details: orderData?.map(o => `Order ${o.id.slice(0, 8)}: ${o.status}`)
         });
       } catch (err) {
         newChecks.push({
@@ -145,7 +127,7 @@ export const SystemStatus: React.FC = () => {
       }
     }
 
-    // 8. Menu System Check
+    // 7. Menu System Check
     if (restaurant) {
       try {
         const { data: menuData, error: menuError } = await supabase
@@ -177,7 +159,7 @@ export const SystemStatus: React.FC = () => {
 
   useEffect(() => {
     runSystemChecks();
-  }, [restaurant, currentRole, currentSession, staffMembers]);
+  }, [restaurant, currentRole, staffMembers]);
 
   const getStatusIcon = (status: SystemCheck['status']) => {
     switch (status) {
@@ -201,92 +183,80 @@ export const SystemStatus: React.FC = () => {
     }
   };
 
+  const overallStatus = checks.length === 0 ? 'warning' : 
+    checks.some(c => c.status === 'fail') ? 'fail' :
+    checks.some(c => c.status === 'warning') ? 'warning' : 'pass';
+
   if (loading) {
     return (
-      <div className="p-4">
-        <div className="animate-pulse">
-          <div className="h-4 bg-gray-200 rounded w-3/4 mb-4"></div>
-          <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-16 bg-gray-200 rounded"></div>
-            ))}
-          </div>
+      <div className="bg-white shadow rounded-lg p-6">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">System Status</h3>
+        <div className="animate-pulse space-y-3">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-12 bg-gray-200 rounded"></div>
+          ))}
         </div>
       </div>
     );
   }
 
-  const passCount = checks.filter(c => c.status === 'pass').length;
-  const failCount = checks.filter(c => c.status === 'fail').length;
-  const warningCount = checks.filter(c => c.status === 'warning').length;
-
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">System Status</h2>
-        <div className="flex space-x-4 text-sm">
-          <span className="flex items-center text-green-600">
-            <CheckCircleIcon className="h-4 w-4 mr-1" />
-            {passCount} Passing
+    <div className="bg-white shadow rounded-lg p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-lg font-medium text-gray-900">System Status</h3>
+        <div className="flex items-center gap-2">
+          {getStatusIcon(overallStatus)}
+          <span className={`text-sm font-medium ${
+            overallStatus === 'pass' ? 'text-green-700' :
+            overallStatus === 'fail' ? 'text-red-700' : 'text-yellow-700'
+          }`}>
+            {overallStatus === 'pass' ? 'All Systems Operational' :
+             overallStatus === 'fail' ? 'System Issues Detected' : 'Warning Conditions'}
           </span>
-          {warningCount > 0 && (
-            <span className="flex items-center text-yellow-600">
-              <ExclamationTriangleIcon className="h-4 w-4 mr-1" />
-              {warningCount} Warnings
-            </span>
-          )}
-          {failCount > 0 && (
-            <span className="flex items-center text-red-600">
-              <XCircleIcon className="h-4 w-4 mr-1" />
-              {failCount} Failing
-            </span>
-          )}
         </div>
+        <button
+          onClick={runSystemChecks}
+          className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+        >
+          Refresh
+        </button>
       </div>
 
       <div className="space-y-4">
         {checks.map((check, index) => (
-          <div
-            key={index}
-            className={`border rounded-lg p-4 ${getStatusColor(check.status)}`}
-          >
-            <div className="flex items-start">
-              <div className="flex-shrink-0 mt-0.5">
+          <div key={index} className={`border rounded-lg p-4 ${getStatusColor(check.status)}`}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
                 {getStatusIcon(check.status)}
-              </div>
-              <div className="ml-3 flex-1">
-                <h3 className="text-sm font-medium text-gray-900">
-                  {check.name}
-                </h3>
-                <p className="text-sm text-gray-600 mt-1">
-                  {check.message}
-                </p>
-                {check.details && check.details.length > 0 && (
-                  <ul className="mt-2 text-xs text-gray-500 space-y-1">
-                    {check.details.map((detail, detailIndex) => (
-                      <li key={detailIndex} className="flex items-center">
-                        <span className="w-1 h-1 bg-gray-400 rounded-full mr-2"></span>
-                        {detail}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <div>
+                  <h4 className="font-medium text-gray-900">{check.name}</h4>
+                  <p className="text-sm text-gray-600">{check.message}</p>
+                </div>
               </div>
             </div>
+            
+            {check.details && check.details.length > 0 && (
+              <div className="mt-3 pl-8">
+                <details className="group">
+                  <summary className="cursor-pointer text-sm text-gray-500 hover:text-gray-700">
+                    View details ({check.details.length} items)
+                  </summary>
+                  <div className="mt-2 space-y-1">
+                    {check.details.map((detail, detailIndex) => (
+                      <div key={detailIndex} className="text-xs text-gray-600 font-mono bg-white bg-opacity-50 p-2 rounded">
+                        {detail}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            )}
           </div>
         ))}
       </div>
 
-      <div className="mt-6 flex justify-center">
-        <button
-          onClick={() => {
-            setLoading(true);
-            runSystemChecks();
-          }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-        >
-          Refresh Status
-        </button>
+      <div className="mt-6 pt-4 border-t border-gray-200 text-xs text-gray-500">
+        Last updated: {new Date().toLocaleString()}
       </div>
     </div>
   );

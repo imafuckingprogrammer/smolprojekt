@@ -221,23 +221,39 @@ export const useStaffStore = create<StaffStore>()(
       },
       
       // Local store methods (for fallback/cache)
-      addStaff: (staff) => set((state) => {
-        const filtered = state.staffMembers.filter(
-          (s) => !(s.email === staff.email && s.restaurantId === staff.restaurantId)
-        );
-        
-        return {
-          staffMembers: [
+      addStaff: (staff) => {
+        console.log('👤 Staff store addStaff called with:', staff);
+        set((state) => {
+          console.log('👥 Current staff members before adding:', state.staffMembers);
+          
+          const filtered = state.staffMembers.filter(
+            (s) => !(s.email === staff.email && s.restaurantId === staff.restaurantId)
+          );
+          
+          const newStaff = {
+            ...staff,
+            id: `local_${Date.now()}`,
+            isActive: true,
+            addedAt: new Date()
+          };
+          
+          console.log('👤 Adding new staff member:', newStaff);
+          console.log('👥 Filtered existing staff:', filtered);
+          
+          const updatedStaffMembers = [
             ...filtered,
-            {
-              ...staff,
-              id: `local_${Date.now()}`,
-              isActive: true,
-              addedAt: new Date()
-            }
-          ]
-        };
-      }),
+            newStaff
+          ];
+          
+          console.log('👥 Updated staff members:', updatedStaffMembers);
+          
+          return {
+            staffMembers: updatedStaffMembers
+          };
+        });
+        
+        console.log('✅ Staff added to store');
+      },
       
       removeStaff: (email, restaurantId) => set((state) => ({
         staffMembers: state.staffMembers.map((s) =>
