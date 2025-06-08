@@ -16,18 +16,20 @@ import { OrderSuccess } from './pages/order/OrderSuccess';
 import { OrderError } from './pages/order/OrderError';
 import { StaffAuth } from './pages/auth/StaffAuth';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
-import { useEffect, useState } from 'react';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { SentryErrorBoundary } from './lib/sentry';
+import React, { useEffect, useState } from 'react';
 
 function AppContent() {
   const { user, loading } = useAuth();
   const [showFallback, setShowFallback] = useState(false);
 
-  // Fallback mechanism to prevent infinite loading
+  // Fallback mechanism to prevent infinite loading - reduced to 8 seconds for better UX
   useEffect(() => {
     if (loading) {
       const timeoutId = setTimeout(() => {
         setShowFallback(true);
-      }, 15000); // 15 seconds
+      }, 8000); // 8 seconds - reduced from 15s for production
 
       return () => clearTimeout(timeoutId);
     } else {
@@ -187,13 +189,17 @@ function App() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AppContent />
-      {/* Add React Query DevTools in development */}
-      {process.env.NODE_ENV === 'development' && (
-        <ReactQueryDevtools initialIsOpen={false} />
-      )}
-    </QueryClientProvider>
+    <SentryErrorBoundary>
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <AppContent />
+          {/* Add React Query DevTools in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <ReactQueryDevtools initialIsOpen={false} />
+          )}
+        </QueryClientProvider>
+      </ErrorBoundary>
+    </SentryErrorBoundary>
   );
 }
 

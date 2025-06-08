@@ -36,27 +36,65 @@ export function StaffAuth() {
   const checkApprovedRestaurants = async (email: string) => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('restaurant_staff')
-        .select(`
-          restaurant_id,
-          role,
-          restaurant:restaurants(id, name)
-        `)
-        .eq('email', email.toLowerCase())
-        .eq('is_active', true);
+      
+      // Check both database and staff invitations
+      const [staffData, invitationData] = await Promise.allSettled([
+        // Check actual staff records
+        supabase
+          .from('restaurant_staff')
+          .select(`
+            restaurant_id,
+            role,
+            restaurant:restaurants(id, name)
+          `)
+          .eq('email', email.toLowerCase())
+          .eq('is_active', true),
+        
+        // Check pending invitations
+        supabase
+          .from('staff_invitations')
+          .select(`
+            restaurant_id,
+            role,
+            status,
+            restaurant:restaurants(id, name)
+          `)
+          .eq('email', email.toLowerCase())
+          .eq('status', 'pending')
+      ]);
 
-      if (error) throw error;
+      let restaurants: ApprovedRestaurant[] = [];
 
-      const restaurants = data?.map(item => ({
-        id: item.restaurant_id,
-        name: (item.restaurant as any)?.name || 'Unknown Restaurant',
-        role: item.role
-      })) || [];
+      // Process staff records
+      if (staffData.status === 'fulfilled' && staffData.value.data) {
+        restaurants = staffData.value.data.map(item => ({
+          id: item.restaurant_id,
+          name: (item.restaurant as any)?.name || 'Unknown Restaurant',
+          role: item.role
+        }));
+      }
+
+      // Process invitations (as potential access)
+      if (invitationData.status === 'fulfilled' && invitationData.value.data) {
+        const inviteRestaurants = invitationData.value.data.map(item => ({
+          id: item.restaurant_id,
+          name: (item.restaurant as any)?.name || 'Unknown Restaurant',
+          role: item.role + ' (pending)'
+        }));
+        
+        // Add invitations that aren't already in staff records
+        inviteRestaurants.forEach(invite => {
+          if (!restaurants.some(r => r.id === invite.id)) {
+            restaurants.push(invite);
+          }
+        });
+      }
 
       setApprovedRestaurants(restaurants);
+      console.log(`Found ${restaurants.length} approved restaurants for ${email}:`, restaurants);
     } catch (err) {
       console.error('Error checking approved restaurants:', err);
+      setApprovedRestaurants([]);
     } finally {
       setLoading(false);
     }
@@ -85,15 +123,27 @@ export function StaffAuth() {
         // After signin, check approved restaurants
         await checkApprovedRestaurants(formData.email);
       } else {
-        // For signup, check if email is approved first
-        const { data: staffCheck } = await supabase
-          .from('restaurant_staff')
-          .select('email')
-          .eq('email', formData.email.toLowerCase())
-          .eq('is_active', true)
-          .limit(1);
+        // For signup, check if email is approved in either staff table or invitations
+        const [staffCheck, invitationCheck] = await Promise.allSettled([
+          supabase
+            .from('restaurant_staff')
+            .select('email')
+            .eq('email', formData.email.toLowerCase())
+            .eq('is_active', true)
+            .limit(1),
+          
+          supabase
+            .from('staff_invitations')
+            .select('email, status')
+            .eq('email', formData.email.toLowerCase())
+            .eq('status', 'pending')
+            .limit(1)
+        ]);
 
-        if (!staffCheck || staffCheck.length === 0) {
+        const hasStaffRecord = staffCheck.status === 'fulfilled' && staffCheck.value.data && staffCheck.value.data.length > 0;
+        const hasInvitation = invitationCheck.status === 'fulfilled' && invitationCheck.value.data && invitationCheck.value.data.length > 0;
+
+        if (!hasStaffRecord && !hasInvitation) {
           setError('This email is not approved by any restaurant. Please contact a restaurant manager to get approved first.');
           setLoading(false);
           return;

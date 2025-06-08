@@ -36,7 +36,7 @@ export function useAuth(): AuthState & AuthActions {
       console.log('🔥 Fetching restaurant for user:', userId);
       
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Restaurant fetch timed out')), 5000);
+        setTimeout(() => reject(new Error('Restaurant fetch timed out')), 8000);
       });
 
       // First, check if user owns a restaurant
@@ -111,13 +111,13 @@ export function useAuth(): AuthState & AuthActions {
 
     const initializeAuth = async () => {
       try {
-        // Set loading timeout
+        // Set loading timeout - reduced from 15s to 5s for better UX
         const timeoutId = setTimeout(() => {
           if (mounted) {
             console.warn('Auth initialization timed out');
             setState(prev => ({ ...prev, loading: false, error: 'Authentication timed out' }));
           }
-        }, 3000);
+        }, 5000);
 
         const { data: { session } } = await supabase.auth.getSession();
         

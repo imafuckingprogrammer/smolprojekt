@@ -112,53 +112,61 @@ export function StaffManagement() {
         throw new Error('This staff member already exists');
       }
 
-      // Add to local store first (always works)
-      addStaff({
-        email: email.toLowerCase().trim(),
-        name: name.trim(),
-        role,
-        restaurantId: restaurant.id
-      });
-
-      // Try to add to database
+      // Try proper database approach first - create staff invitation
       try {
-        const { error: insertError } = await supabase
-          .from('restaurant_staff')
-          .insert({
-            restaurant_id: restaurant.id,
+        const { data, error } = await supabase.rpc('create_staff_invitation', {
+          restaurant_id_param: restaurant.id,
+          email_param: email.toLowerCase().trim(),
+          role_param: role === 'kitchen' ? 'kitchen_staff' : role
+        });
+
+        if (error) throw error;
+
+        if (data && data.success) {
+          console.log('✅ Staff invitation created successfully:', data);
+          
+          // Also add to local store for immediate UI feedback
+          addStaff({
             email: email.toLowerCase().trim(),
             name: name.trim(),
-            role: role === 'kitchen' ? 'kitchen_staff' : role,
-            is_active: true,
-            invited_by: user.id,
-            created_at: new Date().toISOString()
+            role,
+            restaurantId: restaurant.id
           });
-
-        if (insertError) {
-          console.warn('Database insert failed, but local store updated:', insertError);
+          
+          return { email, name, role, invitation: data };
+        } else {
+          throw new Error(data?.error || 'Failed to create invitation');
         }
-
-        // Try to create a placeholder user (optional)
+      } catch (dbError) {
+        console.warn('Database invitation failed, using local storage fallback:', dbError);
+        
+        // Fallback: Add to local store only
+        addStaff({
+          email: email.toLowerCase().trim(),
+          name: name.trim(),
+          role,
+          restaurantId: restaurant.id
+        });
+        
+        // Try simple database insert as backup
         try {
-          const { error: userError } = await supabase
-            .from('users')
-            .upsert({
+          const { error: insertError } = await supabase
+            .from('restaurant_staff')
+            .insert({
+              restaurant_id: restaurant.id,
               email: email.toLowerCase().trim(),
-              first_name: name.split(' ')[0] || name,
-              last_name: name.split(' ').slice(1).join(' ') || '',
-              is_active: false, // Inactive until they sign up
+              name: name.trim(),
+              role: role === 'kitchen' ? 'kitchen_staff' : role,
+              is_active: true,
               created_at: new Date().toISOString()
             });
 
-          if (userError) {
-            console.warn('User placeholder creation failed:', userError);
+          if (!insertError) {
+            console.log('✅ Backup database insert successful');
           }
-        } catch (userCreateError) {
-          console.warn('User creation error (non-critical):', userCreateError);
+        } catch (backupError) {
+          console.warn('Backup database insert also failed:', backupError);
         }
-
-      } catch (dbError) {
-        console.warn('Database operations failed, but local store updated:', dbError);
       }
 
       return { email, name, role };

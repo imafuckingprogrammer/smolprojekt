@@ -274,15 +274,17 @@ export function useKitchenOrders(restaurantId: string | null) {
     fetchOrders();
   }, [fetchOrders]);
 
-  // Real-time subscription with improved error handling
+  // Real-time subscription with improved error handling and proper cleanup
   useEffect(() => {
     if (!restaurantId) return;
 
     console.log('🔥 Setting up real-time orders subscription');
 
-    // Clean up existing channel
+    // Clean up existing channel properly
     if (channelRef.current) {
+      console.log('🧹 Cleaning up existing channel');
       supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
     }
 
     // Create new channel with unique name
@@ -328,12 +330,17 @@ export function useKitchenOrders(restaurantId: string | null) {
 
     channelRef.current = channel;
 
-    // Cleanup on unmount
+    // Cleanup on unmount with proper error handling
     return () => {
       if (channelRef.current) {
         console.log('🧹 Cleaning up kitchen real-time subscription');
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
+        try {
+          supabase.removeChannel(channelRef.current);
+        } catch (error) {
+          console.warn('Error cleaning up subscription:', error);
+        } finally {
+          channelRef.current = null;
+        }
       }
     };
   }, [restaurantId, fetchOrders]);
