@@ -7,6 +7,8 @@ export function useKitchenOrders(restaurantId: string | null) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const channelRef = useRef<any>(null);
+  const lastFetchRef = useRef<number>(0);
+  const [priorityFilter, setPriorityFilter] = useState<'all' | 'urgent' | 'normal'>('all');
 
   // Clear error after 5 seconds
   useEffect(() => {
@@ -241,11 +243,30 @@ export function useKitchenOrders(restaurantId: string | null) {
     return await updateOrderStatus(orderId, 'served');
   }, [updateOrderStatus]);
 
-  // Group orders by status
+  // Enhanced order filtering and grouping
+  const filteredOrders = orders.filter(order => {
+    // Priority filter
+    if (priorityFilter === 'urgent') {
+      const orderAge = Date.now() - new Date(order.created_at).getTime();
+      return orderAge > 15 * 60 * 1000; // Orders older than 15 minutes
+    } else if (priorityFilter === 'normal') {
+      const orderAge = Date.now() - new Date(order.created_at).getTime();
+      return orderAge <= 15 * 60 * 1000; // Orders newer than 15 minutes
+    }
+    return true; // 'all'
+  });
+
+  // Group orders by status with priority sorting
   const groupedOrders = {
-    pending: orders.filter(order => order.status === 'pending'),
-    preparing: orders.filter(order => order.status === 'preparing'),
-    ready: orders.filter(order => order.status === 'ready')
+    pending: filteredOrders
+      .filter(order => order.status === 'pending')
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+    preparing: filteredOrders
+      .filter(order => order.status === 'preparing')
+      .sort((a, b) => new Date(a.claimed_at || a.created_at).getTime() - new Date(b.claimed_at || b.created_at).getTime()),
+    ready: filteredOrders
+      .filter(order => order.status === 'ready')
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
   };
 
   // Initial load
@@ -318,10 +339,12 @@ export function useKitchenOrders(restaurantId: string | null) {
   }, [restaurantId, fetchOrders]);
 
   return {
-    orders,
+    orders: filteredOrders,
     groupedOrders,
     loading,
     error,
+    priorityFilter,
+    setPriorityFilter,
     fetchOrders,
     claimOrder,
     releaseOrder,

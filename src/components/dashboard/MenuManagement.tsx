@@ -173,7 +173,18 @@ export const MenuManagement = memo(function MenuManagement() {
       setSubmitting(true);
       const price = parseFloat(itemForm.price);
       if (isNaN(price) || price < 0) {
-        alert('Please enter a valid price');
+        alert('Please enter a valid price (minimum $0.00)');
+        return;
+      }
+      
+      // Validate required fields
+      if (!itemForm.name.trim()) {
+        alert('Please enter a menu item name');
+        return;
+      }
+      
+      if (!itemForm.category_id) {
+        alert('Please select a category');
         return;
       }
 

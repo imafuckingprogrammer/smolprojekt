@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { MenuManagement } from '../../components/dashboard/MenuManagement';
 import { TableManagement } from '../../components/dashboard/TableManagement';
 import { OrderManagement } from '../../components/dashboard/OrderManagement';
-import { StaffManagement } from '../../components/dashboard/StaffManagement';
+import { StaffManagement } from '../../components/StaffManagement';
 import { DashboardHome } from '../../components/dashboard/DashboardHome';
 import { 
   HomeIcon, 
@@ -85,7 +85,7 @@ export function Dashboard() {
             <Route path="/orders" element={<OrderManagement />} />
             <Route path="/menu" element={<MenuManagement />} />
             <Route path="/tables" element={<TableManagement />} />
-            <Route path="/staff" element={<StaffManagement restaurantId={restaurant?.id || ''} />} />
+            <Route path="/staff" element={<StaffManagement />} />
           </Routes>
         </main>
       </div>
