@@ -145,18 +145,18 @@ export function StaffManagement({ restaurantId }: StaffManagementProps) {
                 <div>
                   <div className="text-sm font-medium text-gray-900">
                     {member.user.first_name} {member.user.last_name}
-                    {!member.user_id && (
+                    {!member.user.is_active && (
                       <span className="ml-2 px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-full">
                         Invitation Pending
                       </span>
                     )}
                   </div>
                   <div className="text-sm text-gray-500">
-                    {member.user.email || member.email}
+                    {member.user.email}
                   </div>
-                  {!member.user_id && (
+                  {!member.user.is_active && (
                     <div className="text-xs text-yellow-600 mt-1">
-                      Invited {member.invited_at ? new Date(member.invited_at).toLocaleDateString() : 'recently'}
+                      Invitation sent - account not activated yet
                     </div>
                   )}
                 </div>
@@ -256,32 +256,63 @@ function StaffInviteModal({ restaurantId, onClose, onSuccess }: StaffInviteModal
     setLoading(true);
 
     try {
-      // Check if email is already invited to this restaurant
-      const { data: existingStaff } = await supabase
-        .from('restaurant_staff')
+      // Simple approach: Create a placeholder user first, then create staff record
+      
+      // Check if user already exists
+      const { data: existingUser } = await supabase
+        .from('users')
         .select('id')
-        .eq('restaurant_id', restaurantId)
         .eq('email', formData.email)
-        .eq('is_active', true)
         .single();
 
-      if (existingStaff) {
-        alert('This email is already invited to your restaurant.');
-        setLoading(false);
-        return;
+      let userId: string;
+
+      if (existingUser) {
+        userId = existingUser.id;
+        
+        // Check if already staff at this restaurant
+        const { data: existingStaff } = await supabase
+          .from('restaurant_staff')
+          .select('id')
+          .eq('restaurant_id', restaurantId)
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          .single();
+
+        if (existingStaff) {
+          alert('This person is already staff at your restaurant.');
+          setLoading(false);
+          return;
+        }
+      } else {
+        // Create placeholder user record for invitation
+        const { data: newUser, error: userError } = await supabase
+          .from('users')
+          .insert({
+            email: formData.email,
+            first_name: formData.email.split('@')[0] || 'Staff',
+            last_name: 'Member',
+            is_active: false, // Mark as inactive until they sign up
+            email_verified: false
+          })
+          .select('id')
+          .single();
+
+        if (userError) throw userError;
+        userId = newUser.id;
       }
 
-      // Add staff invitation (without creating user account yet)
+      // Create staff record
       const { error: staffError } = await supabase
         .from('restaurant_staff')
         .insert({
           restaurant_id: restaurantId,
-          email: formData.email, // Store email for later linking
+          user_id: userId,
           role: formData.role,
           permissions: formData.permissions,
           hourly_rate: formData.hourlyRate ? parseFloat(formData.hourlyRate) : null,
           is_active: true,
-          invited_at: new Date().toISOString()
+          hire_date: new Date().toISOString().split('T')[0]
         });
 
       if (staffError) throw staffError;
@@ -290,16 +321,18 @@ function StaffInviteModal({ restaurantId, onClose, onSuccess }: StaffInviteModal
 
 Send this info to ${formData.email}:
 
-1. Go to the TableDirect sign-up page
-2. Create an account with email: ${formData.email}
-3. You'll automatically get ${formData.role} access to the restaurant
+"You've been invited to join our restaurant team as a ${formData.role}!
 
-They can now sign up and will have immediate access!`);
+1. Go to TableDirect and create an account
+2. Use email: ${formData.email}
+3. You'll have immediate access to the system"
+
+They can now sign up and access the dashboard!`);
       
       onSuccess();
     } catch (error) {
       console.error('Error inviting staff:', error);
-      alert('Failed to invite staff member. Please try again.');
+      alert(`Failed to invite staff member: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }

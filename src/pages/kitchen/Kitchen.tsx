@@ -255,12 +255,14 @@ export function Kitchen() {
         </div>
       </div>
 
-      {/* Work Session Manager */}
+      {/* Temporary: Simple access notice */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <WorkSessionManager
-          restaurantId={restaurant?.id || ''}
-          onSessionChange={setSession}
-        />
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h3 className="text-lg font-medium text-blue-900">Kitchen Access</h3>
+          <p className="text-blue-700 mt-1">
+            You have access to the kitchen system. Work session management will be available soon.
+          </p>
+        </div>
       </div>
 
       {/* Error Display */}
@@ -276,8 +278,8 @@ export function Kitchen() {
         </div>
       )}
 
-      {/* Orders Grid - Only show when session is active */}
-      {session && session.status === 'active' && (
+      {/* Orders Grid - Show for authenticated users */}
+      {restaurant && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Pending Orders */}

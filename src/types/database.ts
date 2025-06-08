@@ -133,13 +133,11 @@ export interface User {
 export interface RestaurantStaff {
   id: string;
   restaurant_id: string;
-  user_id?: string; // Optional for invitations
-  email?: string; // For storing invitations before account creation
+  user_id: string; // Required in actual database
   role: StaffRole;
   permissions: string[];
   hourly_rate?: number;
-  hire_date?: string; // Optional until they actually start
-  invited_at?: string; // When invitation was sent
+  hire_date: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -147,17 +145,14 @@ export interface RestaurantStaff {
 
 export interface WorkSession {
   id: string;
-  restaurant_id: string;
-  user_id: string;
-  station_id?: string;
+  staff_id: string; // References restaurant_staff.id (as per actual schema)
+  session_token: string;
+  device_info: Record<string, any>;
+  station_assignment?: string;
   status: SessionStatus;
   started_at: string;
   ended_at?: string;
-  break_started_at?: string;
-  break_ended_at?: string;
-  notes?: string;
-  created_at: string;
-  updated_at: string;
+  last_heartbeat: string;
 }
 
 export interface WorkSessionWithStation extends WorkSession {

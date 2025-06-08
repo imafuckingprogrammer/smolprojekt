@@ -196,29 +196,29 @@ export function useAuth(): AuthState & AuthActions {
       if (error) throw error;
       
       if (data.user) {
-        // Check if this email was invited as staff
-        const { data: staffInvitation } = await supabase
-          .from('restaurant_staff')
-          .select('*')
+        // Check if there's a placeholder user account for this email
+        const { data: existingUser } = await supabase
+          .from('users')
+          .select('id, is_active')
           .eq('email', email)
-          .is('user_id', null)
-          .eq('is_active', true)
           .single();
 
-        if (staffInvitation) {
-          // Link the invitation to this user account
-          const { error: linkError } = await supabase
-            .from('restaurant_staff')
-            .update({
-              user_id: data.user.id,
-              hire_date: new Date().toISOString()
+        if (existingUser && !existingUser.is_active) {
+          // Activate the placeholder account
+          const { error: activateError } = await supabase
+            .from('users')
+            .update({ 
+              is_active: true,
+              email_verified: true,
+              first_name: data.user.user_metadata?.first_name || email.split('@')[0],
+              last_name: data.user.user_metadata?.last_name || 'User'
             })
-            .eq('id', staffInvitation.id);
+            .eq('id', existingUser.id);
 
-          if (linkError) {
-            console.error('Error linking staff invitation:', linkError);
+          if (activateError) {
+            console.error('Error activating user account:', activateError);
           } else {
-            console.log('✅ Staff invitation linked successfully');
+            console.log('✅ Staff account activated successfully');
           }
         } else {
           // Create restaurant record for new restaurant owner

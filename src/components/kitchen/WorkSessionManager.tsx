@@ -164,8 +164,7 @@ export function WorkSessionManager({ restaurantId, onSessionChange }: WorkSessio
       const { error } = await supabase
         .from('work_sessions')
         .update({
-          status: 'break',
-          break_started_at: new Date().toISOString()
+          status: 'break'
         })
         .eq('id', currentSession.id);
 
@@ -173,13 +172,11 @@ export function WorkSessionManager({ restaurantId, onSessionChange }: WorkSessio
       
       setCurrentSession({
         ...currentSession,
-        status: 'break',
-        break_started_at: new Date().toISOString()
+        status: 'break'
       });
       onSessionChange({
         ...currentSession,
-        status: 'break',
-        break_started_at: new Date().toISOString()
+        status: 'break'
       });
     } catch (error) {
       console.error('Error taking break:', error);
@@ -194,8 +191,7 @@ export function WorkSessionManager({ restaurantId, onSessionChange }: WorkSessio
       const { error } = await supabase
         .from('work_sessions')
         .update({
-          status: 'active',
-          break_ended_at: new Date().toISOString()
+          status: 'active'
         })
         .eq('id', currentSession.id);
 
@@ -203,13 +199,11 @@ export function WorkSessionManager({ restaurantId, onSessionChange }: WorkSessio
       
       setCurrentSession({
         ...currentSession,
-        status: 'active',
-        break_ended_at: new Date().toISOString()
+        status: 'active'
       });
       onSessionChange({
         ...currentSession,
-        status: 'active',
-        break_ended_at: new Date().toISOString()
+        status: 'active'
       });
     } catch (error) {
       console.error('Error ending break:', error);
