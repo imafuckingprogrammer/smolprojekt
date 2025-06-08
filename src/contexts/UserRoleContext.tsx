@@ -33,8 +33,25 @@ export function UserRoleProvider({ children }: UserRoleProviderProps) {
 
   // Determine user permissions
   const isOwner = Boolean(user && restaurant && user.email === restaurant.email);
-  const staffInfo = user?.email && restaurant ? getStaffByEmail(user.email, restaurant.id) : null;
-  const isStaff = Boolean(user && restaurant && staffInfo);
+  const { checkStaffAccess } = useStaffStore();
+  const [staffInfo, setStaffInfo] = useState<any>(null);
+  const [isStaff, setIsStaff] = useState(false);
+
+  // Check staff access when user/restaurant changes
+  useEffect(() => {
+    const checkAccess = async () => {
+      if (user?.email && restaurant) {
+        const staffMember = await checkStaffAccess(user.email, restaurant.id);
+        setStaffInfo(staffMember);
+        setIsStaff(Boolean(staffMember));
+      } else {
+        setStaffInfo(null);
+        setIsStaff(false);
+      }
+    };
+
+    checkAccess();
+  }, [user, restaurant, checkStaffAccess]);
 
   // Calculate capabilities
   const canAccessKitchen = isOwner || isStaff;
