@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { generateOrderNumber } from '../lib/utils';
 import type { Order, OrderItem, OrderWithItems, CartItem } from '../types/database';

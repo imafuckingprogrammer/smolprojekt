@@ -1,4 +1,4 @@
-import React from 'react';
+// UserAvatar component for displaying user profile pictures
 import { UserIcon } from '@heroicons/react/24/outline';
 
 interface UserAvatarProps {

@@ -79,7 +79,10 @@ export async function generateQRCodeBuffer(
   const qrOptions = { ...defaultQROptions, ...options };
   
   try {
-    return await QRCode.toBuffer(url, qrOptions);
+    return await QRCode.toBuffer(url, {
+      ...qrOptions,
+      type: 'png' as const
+    });
   } catch (error) {
     console.error('Error generating QR code buffer:', error);
     throw new Error('Failed to generate QR code');

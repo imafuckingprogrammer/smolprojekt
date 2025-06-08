@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './useAuth';
+import { realTimeManager } from '../lib/realTimeManager';
 import type { OrderWithItems } from '../types/database';
 
 export function useOrdersRealTime() {
@@ -11,11 +12,23 @@ export function useOrdersRealTime() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
-  // Fixed fetchOrders with stable dependencies
+  // Clear error after 5 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
+  // Stable fetchOrders function - only depends on restaurant.id (not entire restaurant object)
   const fetchOrders = useCallback(async () => {
-    if (!restaurant) return;
+    if (!restaurant?.id) {
+      setLoading(false);
+      return;
+    }
 
     try {
+      setError(null);
       const { data, error } = await supabase
         .from('orders')
         .select(`
@@ -36,62 +49,83 @@ export function useOrdersRealTime() {
 
       setOrders(data || []);
       setLastUpdate(new Date());
-      setError(null);
+      console.log('✅ Orders fetched successfully:', data?.length || 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error fetching orders:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch orders';
+      setError(errorMessage);
+      console.error('❌ Error fetching orders:', err);
     } finally {
       setLoading(false);
     }
-  }, [restaurant]); // ONLY restaurant dependency
+  }, [restaurant?.id]); // Only depend on restaurant.id, not entire object
 
-  // Initial load - FIXED: Only depends on restaurant, NOT fetchOrders
+  // Initial load - stable dependency
   useEffect(() => {
     fetchOrders();
-  }, [restaurant]);
+  }, [fetchOrders]);
 
-  // Real-time subscription - FIXED: Unique channel names, proper cleanup
+  // Real-time subscription using singleton manager
   useEffect(() => {
-    if (!restaurant) return;
+    if (!restaurant?.id) return;
 
     console.log('🔥 Setting up real-time orders subscription for restaurant:', restaurant.id);
 
-    // Unique channel name with timestamp
-    const channel = supabase
-      .channel(`orders_realtime_${restaurant.id}_${Date.now()}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'orders',
-          filter: `restaurant_id=eq.${restaurant.id}`
-        },
-        (payload) => {
-          console.log('🔥 REAL-TIME Orders change:', payload);
-          
-          // Immediately refetch orders to get latest data
-          fetchOrders();
-          
-          // Show notification for different events
-          if (payload.eventType === 'INSERT') {
-            console.log('🆕 New order received!', payload.new);
-          } else if (payload.eventType === 'UPDATE') {
-            console.log('📝 Order updated!', payload.new);
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log('🔥 Real-time orders subscription status:', status);
-      });
+    // Single callback that handles all real-time changes
+    const handleRealTimeChange = (payload: any) => {
+      console.log('🔥 Real-time change:', payload.eventType, payload.table);
+      fetchOrders(); // Refetch to get complete data with joins
+    };
+
+    // Subscribe through singleton manager
+    const unsubscribeOrders = realTimeManager.subscribeToOrders(restaurant.id, handleRealTimeChange);
+    const unsubscribeSessions = realTimeManager.subscribeToSessions(restaurant.id, handleRealTimeChange);
 
     return () => {
       console.log('🔥 Cleaning up orders subscription');
-      supabase.removeChannel(channel);
+      unsubscribeOrders();
+      unsubscribeSessions();
     };
-  }, [restaurant]); // ONLY restaurant dependency
+  }, [restaurant?.id, fetchOrders]); // Both dependencies are stable
 
-  // Order claiming functions
+  // Session heartbeat with better error handling
+  useEffect(() => {
+    if (!currentSessionId) return;
+
+    const heartbeat = async () => {
+      try {
+        const { error } = await supabase
+          .from('active_sessions')
+          .update({ 
+            last_seen: new Date().toISOString(),
+            status: 'active'
+          })
+          .eq('id', currentSessionId);
+        
+        if (error) {
+          console.error('Heartbeat failed:', error);
+          // If session doesn't exist anymore, clear it
+          if (error.message.includes('No rows updated')) {
+            setCurrentSessionId(null);
+            setError('Session expired. Please rejoin the kitchen.');
+          }
+        }
+      } catch (error) {
+        console.error('Heartbeat failed:', error);
+      }
+    };
+
+    // Initial heartbeat
+    heartbeat();
+    
+    // Set up interval
+    const heartbeatInterval = setInterval(heartbeat, 30000);
+
+    return () => {
+      clearInterval(heartbeatInterval);
+    };
+  }, [currentSessionId]);
+
+  // Improved order claiming with better race condition handling
   const claimOrder = useCallback(async (orderId: string): Promise<boolean> => {
     if (!currentSessionId) {
       setError('No active session. Please join the kitchen first.');
@@ -99,8 +133,10 @@ export function useOrdersRealTime() {
     }
 
     try {
+      setError(null);
       console.log('🔥 Claiming order:', { orderId, sessionId: currentSessionId });
       
+      // Use the stored procedure for atomic claiming
       const { data, error } = await supabase.rpc('claim_order', {
         order_uuid: orderId,
         session_uuid: currentSessionId
@@ -110,25 +146,30 @@ export function useOrdersRealTime() {
       
       if (data) {
         console.log('✅ Order claimed successfully');
+        // Fetch fresh data to update UI immediately
+        await fetchOrders();
         return true;
       } else {
-        setError('Failed to claim order. It may have been claimed by someone else.');
+        setError('Order already claimed by someone else.');
         return false;
       }
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to claim order';
       console.error('❌ Error claiming order:', err);
-      setError(err instanceof Error ? err.message : 'Failed to claim order');
+      setError(errorMessage);
       return false;
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, fetchOrders]);
 
+  // Release order claim
   const releaseOrder = useCallback(async (orderId: string): Promise<boolean> => {
     if (!currentSessionId) {
-      setError('No active session.');
+      setError('No active session. Please join the kitchen first.');
       return false;
     }
 
     try {
+      setError(null);
       console.log('🔥 Releasing order:', { orderId, sessionId: currentSessionId });
       
       const { data, error } = await supabase.rpc('release_order', {
@@ -140,97 +181,110 @@ export function useOrdersRealTime() {
       
       if (data) {
         console.log('✅ Order released successfully');
+        await fetchOrders();
         return true;
       } else {
-        setError('Failed to release order.');
+        setError('Failed to release order. You may not be the claimant.');
         return false;
       }
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to release order';
       console.error('❌ Error releasing order:', err);
-      setError(err instanceof Error ? err.message : 'Failed to release order');
+      setError(errorMessage);
       return false;
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, fetchOrders]);
 
+  // Update order status
   const updateOrderStatus = useCallback(async (orderId: string, status: string): Promise<boolean> => {
+    if (!currentSessionId) {
+      setError('No active session. Please join the kitchen first.');
+      return false;
+    }
+
     try {
-      console.log('🔥 Updating order status:', { orderId, status });
+      setError(null);
+      console.log('🔥 Updating order status:', { orderId, status, sessionId: currentSessionId });
       
-      const { error } = await supabase
-        .from('orders')
-        .update({ 
-          status,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', orderId);
+      const { data, error } = await supabase.rpc('update_order_status', {
+        order_uuid: orderId,
+        new_status: status,
+        session_uuid: currentSessionId
+      });
 
       if (error) throw error;
       
-      console.log('✅ Order status updated successfully');
-      return true;
+      if (data) {
+        console.log('✅ Order status updated successfully');
+        await fetchOrders();
+        return true;
+      } else {
+        setError('Failed to update order status. You may not be authorized.');
+        return false;
+      }
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update order status';
       console.error('❌ Error updating order status:', err);
-      setError(err instanceof Error ? err.message : 'Failed to update order');
+      setError(errorMessage);
       return false;
     }
-  }, []);
+  }, [currentSessionId, fetchOrders]);
 
-  // Session management
-  const createSession = useCallback(async (userName: string): Promise<string | null> => {
-    if (!restaurant) return null;
+  // Kitchen session management
+  const joinKitchen = useCallback(async (userName: string): Promise<boolean> => {
+    if (!restaurant?.id) {
+      setError('No restaurant context available.');
+      return false;
+    }
 
     try {
-      const sessionToken = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      setError(null);
+      console.log('🔥 Joining kitchen:', { userName, restaurantId: restaurant.id });
       
-      console.log('🔥 Attempting to create session:', {
-        restaurant_id: restaurant.id,
-        user_name: userName,
-        session_token: sessionToken
+      const { data, error } = await supabase.rpc('join_kitchen_session', {
+        restaurant_uuid: restaurant.id,
+        user_name: userName
       });
 
-      const { data, error } = await supabase
-        .from('active_sessions')
-        .insert({
-          // Remove custom ID - let database generate UUID
-          restaurant_id: restaurant.id,
-          user_name: userName.trim(),
-          session_token: sessionToken,
-          status: 'active',
-          last_seen: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('❌ Session creation error:', error);
-        throw error;
-      }
+      if (error) throw error;
       
-      console.log('✅ Session created successfully:', data);
-      setCurrentSessionId(data.id); // Use database-generated ID
-      return data.id;
+      if (data) {
+        setCurrentSessionId(data);
+        console.log('✅ Joined kitchen successfully, session ID:', data);
+        return true;
+      } else {
+        setError('Failed to join kitchen session.');
+        return false;
+      }
     } catch (err) {
-      console.error('❌ Error creating session:', err);
-      setError(err instanceof Error ? err.message : 'Failed to create session');
-      return null;
+      const errorMessage = err instanceof Error ? err.message : 'Failed to join kitchen';
+      console.error('❌ Error joining kitchen:', err);
+      setError(errorMessage);
+      return false;
     }
-  }, [restaurant]);
+  }, [restaurant?.id]);
 
-  const endSession = useCallback(async (): Promise<void> => {
-    if (!currentSessionId) return;
+  const leaveKitchen = useCallback(async (): Promise<boolean> => {
+    if (!currentSessionId) return true;
 
     try {
-      const { error } = await supabase
-        .from('active_sessions')
-        .delete()
-        .eq('id', currentSessionId);
+      setError(null);
+      console.log('🔥 Leaving kitchen:', { sessionId: currentSessionId });
+      
+      const { error } = await supabase.rpc('leave_kitchen_session', {
+        session_uuid: currentSessionId
+      });
 
       if (error) throw error;
       
       setCurrentSessionId(null);
-      console.log('✅ Session ended');
+      console.log('✅ Left kitchen successfully');
+      return true;
     } catch (err) {
-      console.error('❌ Error ending session:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to leave kitchen';
+      console.error('❌ Error leaving kitchen:', err);
+      setError(errorMessage);
+      return false;
     }
   }, [currentSessionId]);
 
@@ -240,11 +294,11 @@ export function useOrdersRealTime() {
     error,
     lastUpdate,
     currentSessionId,
-    updateOrderStatus,
     claimOrder,
     releaseOrder,
-    createSession,
-    endSession,
-    refetch: fetchOrders
+    updateOrderStatus,
+    joinKitchen,
+    leaveKitchen,
+    refetch: fetchOrders,
   };
 } 

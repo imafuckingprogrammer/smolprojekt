@@ -1,5 +1,9 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { queryClient, cachePresistence } from './lib/queryClient';
 import { useAuth } from './hooks/useAuth';
+import { UserRoleProvider } from './contexts/UserRoleContext';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
 import { AuthLayout } from './components/auth/AuthLayout';
 import { SignIn } from './pages/auth/SignIn';
@@ -14,8 +18,8 @@ import { TestMenu } from './pages/test/TestMenu';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { useEffect, useState } from 'react';
 
-function App() {
-  const { user, restaurant, loading, error } = useAuth();
+function AppContent() {
+  const { user, loading } = useAuth();
   const [showFallback, setShowFallback] = useState(false);
 
   // Fallback mechanism to prevent infinite loading
@@ -54,8 +58,9 @@ function App() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50">
-        <Routes>
+      <UserRoleProvider>
+        <div className="min-h-screen bg-gray-50">
+          <Routes>
           {/* Public Routes - Don't wait for auth loading */}
           <Route path="/order/:token" element={<CustomerOrder />} />
           <Route path="/order/:token/success" element={<OrderSuccess />} />
@@ -117,8 +122,9 @@ function App() {
           
           {/* 404 */}
           <Route path="*" element={<NotFound />} />
-        </Routes>
-      </div>
+          </Routes>
+        </div>
+      </UserRoleProvider>
     </Router>
   );
 }
@@ -150,6 +156,44 @@ function NotFound() {
         </a>
       </div>
       </div>
+  );
+}
+
+// Main App component with React Query provider
+function App() {
+  const [cacheRestored, setCacheRestored] = useState(false);
+
+  // Restore cache on app start
+  useEffect(() => {
+    const initializeCache = async () => {
+      try {
+        await cachePresistence.restore();
+        setCacheRestored(true);
+      } catch (error) {
+        console.error('Failed to restore cache:', error);
+        setCacheRestored(true); // Continue anyway
+      }
+    };
+
+    initializeCache();
+  }, []);
+
+  if (!cacheRestored) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppContent />
+      {/* Add React Query DevTools in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <ReactQueryDevtools initialIsOpen={false} />
+      )}
+    </QueryClientProvider>
   );
 }
 

@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { MenuManagement } from '../../components/dashboard/MenuManagement';
 import { TableManagement } from '../../components/dashboard/TableManagement';
 import { OrderManagement } from '../../components/dashboard/OrderManagement';
+import { StaffManagement } from '../../components/dashboard/StaffManagement';
 import { DashboardHome } from '../../components/dashboard/DashboardHome';
 import { 
   HomeIcon, 
@@ -13,7 +14,8 @@ import {
   FireIcon,
   Bars3Icon,
   XMarkIcon,
-  ArrowRightOnRectangleIcon
+  ArrowRightOnRectangleIcon,
+  Cog6ToothIcon
 } from '@heroicons/react/24/outline';
 
 const navigation = [
@@ -21,12 +23,13 @@ const navigation = [
   { name: 'Orders', href: '/dashboard/orders', icon: ClipboardDocumentListIcon },
   { name: 'Menu', href: '/dashboard/menu', icon: CubeIcon },
   { name: 'Tables', href: '/dashboard/tables', icon: QrCodeIcon },
+  { name: 'Staff', href: '/dashboard/staff', icon: Cog6ToothIcon },
   { name: 'Kitchen', href: '/kitchen', icon: FireIcon },
 ];
 
 export function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, restaurant, signOut } = useAuth();
+  const { restaurant, signOut } = useAuth();
   const location = useLocation();
 
   const handleSignOut = async () => {
@@ -82,6 +85,7 @@ export function Dashboard() {
             <Route path="/orders" element={<OrderManagement />} />
             <Route path="/menu" element={<MenuManagement />} />
             <Route path="/tables" element={<TableManagement />} />
+            <Route path="/staff" element={<StaffManagement restaurantId={restaurant?.id || ''} />} />
           </Routes>
         </main>
       </div>
