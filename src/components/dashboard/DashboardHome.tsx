@@ -180,16 +180,31 @@ export const DashboardHome = memo(function DashboardHome() {
     
     try {
       const { data, error } = await supabase
-        .from('active_sessions')
-        .select('*, station:kitchen_stations(station_name)')
+        .from('work_sessions')
+        .select(`
+          *,
+          station:kitchen_stations(station_name),
+          staff:restaurant_staff(
+            user:users(first_name, last_name)
+          )
+        `)
         .eq('restaurant_id', restaurant.id)
         .eq('status', 'active')
-        .order('created_at', { ascending: false });
+        .order('started_at', { ascending: false });
       
       if (error) throw error;
-      setActiveSessions(data || []);
+      
+      // Transform data to match expected format
+      const transformedData = data?.map(session => ({
+        id: session.id,
+        user_name: `${session.staff?.user?.first_name || 'Unknown'} ${session.staff?.user?.last_name || 'User'}`.trim(),
+        station: session.station,
+        status: session.status
+      })) || [];
+      
+      setActiveSessions(transformedData);
     } catch (error) {
-      console.error('Error fetching active sessions:', error);
+      console.error('Error fetching work sessions:', error);
     }
   };
 
