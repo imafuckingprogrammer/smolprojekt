@@ -133,11 +133,13 @@ export interface User {
 export interface RestaurantStaff {
   id: string;
   restaurant_id: string;
-  user_id: string;
+  user_id?: string; // Optional for invitations
+  email?: string; // For storing invitations before account creation
   role: StaffRole;
   permissions: string[];
   hourly_rate?: number;
-  hire_date: string;
+  hire_date?: string; // Optional until they actually start
+  invited_at?: string; // When invitation was sent
   is_active: boolean;
   created_at: string;
   updated_at: string;

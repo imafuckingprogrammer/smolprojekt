@@ -39,36 +39,61 @@ export function useAuth(): AuthState & AuthActions {
         setTimeout(() => reject(new Error('Restaurant fetch timed out')), 5000);
       });
 
-      const fetchPromise = supabase
+      // First, check if user owns a restaurant
+      const ownerPromise = supabase
         .from('restaurants')
         .select('*')
         .eq('owner_id', userId)
         .maybeSingle();
       
-      const { data: restaurant, error } = await Promise.race([fetchPromise, timeoutPromise]);
+      const { data: ownedRestaurant, error: ownerError } = await Promise.race([ownerPromise, timeoutPromise]);
 
-      if (error) {
-        console.error('Error fetching restaurant:', error);
+      if (ownedRestaurant) {
+        // User is a restaurant owner
         setState(prev => ({ 
           ...prev, 
-          restaurant: null, 
-          loading: false, 
-          error: 'Failed to load restaurant data' 
+          restaurant: ownedRestaurant, 
+          loading: false,
+          error: null
         }));
+        console.log('✅ Restaurant owner data loaded:', ownedRestaurant.name);
         return;
       }
 
-      // Update state with restaurant data
+      // If not an owner, check if user is staff at a restaurant
+      const staffPromise = supabase
+        .from('restaurant_staff')
+        .select(`
+          *,
+          restaurant:restaurants(*)
+        `)
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      const { data: staffData, error: staffError } = await Promise.race([staffPromise, timeoutPromise]);
+
+      if (staffData && staffData.restaurant) {
+        // User is staff at a restaurant
+        setState(prev => ({ 
+          ...prev, 
+          restaurant: staffData.restaurant, 
+          loading: false,
+          error: null
+        }));
+        console.log('✅ Staff restaurant data loaded:', staffData.restaurant.name);
+        return;
+      }
+
+      // No restaurant found
       setState(prev => ({ 
         ...prev, 
-        restaurant, 
+        restaurant: null, 
         loading: false,
         error: null
       }));
+      console.log('ℹ️ No restaurant found for user');
 
-      // Note: No longer using localStorage cache - using React Query for proper caching
-
-      console.log('✅ Restaurant data loaded:', restaurant?.name);
     } catch (error) {
       console.error('Error in fetchRestaurant:', error);
       setState(prev => ({ 
@@ -171,16 +196,42 @@ export function useAuth(): AuthState & AuthActions {
       if (error) throw error;
       
       if (data.user) {
-        // Create restaurant record
-        const { error: restaurantError } = await supabase
-          .from('restaurants')
-          .insert({
-            owner_id: data.user.id,
-            email: data.user.email!,
-            ...restaurantData,
-          });
+        // Check if this email was invited as staff
+        const { data: staffInvitation } = await supabase
+          .from('restaurant_staff')
+          .select('*')
+          .eq('email', email)
+          .is('user_id', null)
+          .eq('is_active', true)
+          .single();
 
-        if (restaurantError) throw restaurantError;
+        if (staffInvitation) {
+          // Link the invitation to this user account
+          const { error: linkError } = await supabase
+            .from('restaurant_staff')
+            .update({
+              user_id: data.user.id,
+              hire_date: new Date().toISOString()
+            })
+            .eq('id', staffInvitation.id);
+
+          if (linkError) {
+            console.error('Error linking staff invitation:', linkError);
+          } else {
+            console.log('✅ Staff invitation linked successfully');
+          }
+        } else {
+          // Create restaurant record for new restaurant owner
+          const { error: restaurantError } = await supabase
+            .from('restaurants')
+            .insert({
+              owner_id: data.user.id,
+              email: data.user.email!,
+              ...restaurantData,
+            });
+
+          if (restaurantError) throw restaurantError;
+        }
       }
     } catch (error) {
       const message = error instanceof AuthError ? error.message : 'Sign up failed';

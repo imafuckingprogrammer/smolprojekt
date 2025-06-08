@@ -31,7 +31,24 @@ export function StaffManagement({ restaurantId }: StaffManagementProps) {
         .order('role');
 
       if (error) throw error;
-      setStaff(data as StaffWithUser[]);
+      
+      // Handle staff with and without user accounts
+      const staffList = data?.map(member => ({
+        ...member,
+        user: member.user || {
+          id: '',
+          email: member.email || '',
+          first_name: member.email?.split('@')[0] || 'Invited',
+          last_name: 'User',
+          created_at: '',
+          updated_at: '',
+          is_active: false,
+          email_verified: false,
+          timezone: 'UTC'
+        }
+      })) || [];
+      
+      setStaff(staffList as StaffWithUser[]);
     } catch (error) {
       console.error('Error fetching staff:', error);
     } finally {
@@ -128,10 +145,20 @@ export function StaffManagement({ restaurantId }: StaffManagementProps) {
                 <div>
                   <div className="text-sm font-medium text-gray-900">
                     {member.user.first_name} {member.user.last_name}
+                    {!member.user_id && (
+                      <span className="ml-2 px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-full">
+                        Invitation Pending
+                      </span>
+                    )}
                   </div>
                   <div className="text-sm text-gray-500">
-                    {member.user.email}
+                    {member.user.email || member.email}
                   </div>
+                  {!member.user_id && (
+                    <div className="text-xs text-yellow-600 mt-1">
+                      Invited {member.invited_at ? new Date(member.invited_at).toLocaleDateString() : 'recently'}
+                    </div>
+                  )}
                 </div>
                 
                 <span className={`px-2 py-1 text-xs font-medium rounded-full ${getRoleColor(member.role)}`}>
@@ -229,52 +256,45 @@ function StaffInviteModal({ restaurantId, onClose, onSuccess }: StaffInviteModal
     setLoading(true);
 
     try {
-      // First, create or find user by email
-      let userId: string;
-      
-      const { data: existingUser } = await supabase
-        .from('users')
+      // Check if email is already invited to this restaurant
+      const { data: existingStaff } = await supabase
+        .from('restaurant_staff')
         .select('id')
+        .eq('restaurant_id', restaurantId)
         .eq('email', formData.email)
+        .eq('is_active', true)
         .single();
 
-      if (existingUser) {
-        userId = existingUser.id;
-      } else {
-        // Create new user account
-        const { data: newUser, error: userError } = await supabase
-          .from('users')
-          .insert({
-            email: formData.email,
-            first_name: formData.email.split('@')[0],
-            last_name: 'User',
-            is_active: true,
-            email_verified: false,
-            timezone: 'UTC'
-          })
-          .select('id')
-          .single();
-
-        if (userError) throw userError;
-        userId = newUser.id;
+      if (existingStaff) {
+        alert('This email is already invited to your restaurant.');
+        setLoading(false);
+        return;
       }
 
-      // Add staff relationship
+      // Add staff invitation (without creating user account yet)
       const { error: staffError } = await supabase
         .from('restaurant_staff')
         .insert({
           restaurant_id: restaurantId,
-          user_id: userId,
+          email: formData.email, // Store email for later linking
           role: formData.role,
           permissions: formData.permissions,
           hourly_rate: formData.hourlyRate ? parseFloat(formData.hourlyRate) : null,
-          is_active: true
+          is_active: true,
+          invited_at: new Date().toISOString()
         });
 
       if (staffError) throw staffError;
 
-      // TODO: Send invitation email
-      alert(`Invitation sent to ${formData.email}! They can now create an account and access the system.`);
+      alert(`✅ Staff invitation created! 
+
+Send this info to ${formData.email}:
+
+1. Go to the TableDirect sign-up page
+2. Create an account with email: ${formData.email}
+3. You'll automatically get ${formData.role} access to the restaurant
+
+They can now sign up and will have immediate access!`);
       
       onSuccess();
     } catch (error) {
