@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
+import { useStaffStore } from '../stores/staffStore';
+import { useSessionStore } from '../stores/sessionStore';
 
 export type UserRoleType = 'owner' | 'kitchen' | 'customer';
 
@@ -9,7 +10,11 @@ export interface UserRole {
   permissions: string[];
   sessionId?: string;
   userName?: string;
-  deviceId?: string;
+  email?: string;
+  staffInfo?: {
+    name: string;
+    role: 'kitchen' | 'server' | 'manager';
+  };
 }
 
 export interface UserRoleContextType {
@@ -20,6 +25,7 @@ export interface UserRoleContextType {
   leaveCurrentRole: () => Promise<void>;
   loading: boolean;
   error: string | null;
+  canAccessKitchen: boolean;
 }
 
 const UserRoleContext = createContext<UserRoleContextType | undefined>(undefined);
@@ -33,7 +39,7 @@ const ROLE_PERMISSIONS = {
     'manage_restaurant',
     'view_orders',
     'update_order_status',
-    'override_any_action'
+    'manage_staff'
   ],
   kitchen: [
     'view_orders',
@@ -48,21 +54,27 @@ const ROLE_PERMISSIONS = {
   ]
 } as const;
 
-// Generate device ID for session tracking
-const getDeviceId = (): string => {
-  let deviceId = localStorage.getItem('tabledirect_device_id');
-  if (!deviceId) {
-    deviceId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem('tabledirect_device_id', deviceId);
-  }
-  return deviceId;
-};
-
 export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user, restaurant } = useAuth();
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Zustand stores
+  const { isStaffMember, getStaffByEmail } = useStaffStore();
+  const { 
+    createSession, 
+    endSession, 
+    currentSession, 
+    loading: sessionLoading,
+    error: sessionError 
+  } = useSessionStore();
+
+  // Calculate if user can access kitchen
+  const canAccessKitchen = Boolean(
+    (user && restaurant && user.email === restaurant.email) || // Owner
+    (user && restaurant && user.email && isStaffMember(user.email, restaurant.id)) // Staff member
+  );
 
   // Clear error after 5 seconds
   useEffect(() => {
@@ -82,6 +94,13 @@ export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [user, restaurant, userRole]);
 
+  // Sync session errors with local state
+  useEffect(() => {
+    if (sessionError) {
+      setError(sessionError);
+    }
+  }, [sessionError]);
+
   const switchToKitchen = async (userName: string): Promise<boolean> => {
     if (!restaurant?.id) {
       setError('No restaurant context available.');
@@ -93,30 +112,43 @@ export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }
       return false;
     }
 
+    if (!canAccessKitchen) {
+      setError('You are not authorized to access the kitchen.');
+      return false;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
       console.log('🔥 Switching to kitchen role:', { userName, restaurantId: restaurant.id });
       
-      const deviceId = getDeviceId();
-      
-      // Create kitchen session through RPC
-      const { data: sessionId, error } = await supabase.rpc('join_kitchen_session', {
-        restaurant_uuid: restaurant.id,
-        user_name: userName.trim(),
-        device_id: deviceId
+      // End any existing session first
+      if (currentSession) {
+        await endSession();
+      }
+
+      // Create new kitchen session
+      const sessionId = await createSession({
+        restaurantId: restaurant.id,
+        userName: userName.trim(),
+        email: user?.email
       });
 
-      if (error) throw error;
-
       if (sessionId) {
+        // Get staff info if available
+        const staffInfo = user?.email ? getStaffByEmail(user.email, restaurant.id) : null;
+        
         const newRole: UserRole = {
           type: 'kitchen',
           permissions: [...ROLE_PERMISSIONS.kitchen],
           sessionId,
           userName: userName.trim(),
-          deviceId
+          email: user?.email,
+          staffInfo: staffInfo ? {
+            name: staffInfo.name,
+            role: staffInfo.role
+          } : undefined
         };
 
         setUserRole(newRole);
@@ -150,7 +182,7 @@ export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }
     const newRole: UserRole = {
       type: 'owner',
       permissions: [...ROLE_PERMISSIONS.owner],
-      deviceId: getDeviceId()
+      email: user.email
     };
 
     setUserRole(newRole);
@@ -160,8 +192,7 @@ export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }
   const switchToCustomer = () => {
     const newRole: UserRole = {
       type: 'customer',
-      permissions: [...ROLE_PERMISSIONS.customer],
-      deviceId: getDeviceId()
+      permissions: [...ROLE_PERMISSIONS.customer]
     };
 
     setUserRole(newRole);
@@ -176,17 +207,9 @@ export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     try {
       // If leaving kitchen role, clean up session
-      if (userRole.type === 'kitchen' && userRole.sessionId) {
-        console.log('🔥 Leaving kitchen session:', userRole.sessionId);
-        
-        const { error } = await supabase.rpc('leave_kitchen_session', {
-          session_uuid: userRole.sessionId
-        });
-
-        if (error) {
-          console.error('Error leaving kitchen session:', error);
-          // Continue anyway to clear local state
-        }
+      if (userRole.type === 'kitchen' && currentSession) {
+        console.log('🔥 Leaving kitchen session:', currentSession.id);
+        await endSession();
       }
 
       setUserRole(null);
@@ -200,38 +223,19 @@ export const UserRoleProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   };
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (userRole?.type === 'kitchen' && userRole.sessionId) {
-        // Background cleanup - don't await
-        const cleanup = async () => {
-          try {
-            await supabase.rpc('leave_kitchen_session', {
-              session_uuid: userRole.sessionId
-            });
-            console.log('Background session cleanup successful');
-          } catch (err: unknown) {
-            console.error('Background session cleanup failed:', err);
-          }
-        };
-        cleanup();
-      }
-    };
-  }, [userRole?.sessionId, userRole?.type]);
-
-  const contextValue: UserRoleContextType = {
+  const value: UserRoleContextType = {
     userRole,
     switchToKitchen,
     switchToOwner,
     switchToCustomer,
     leaveCurrentRole,
-    loading,
-    error
+    loading: loading || sessionLoading,
+    error,
+    canAccessKitchen
   };
 
   return (
-    <UserRoleContext.Provider value={contextValue}>
+    <UserRoleContext.Provider value={value}>
       {children}
     </UserRoleContext.Provider>
   );
@@ -245,10 +249,9 @@ export const useUserRole = (): UserRoleContextType => {
   return context;
 };
 
-// Utility functions for permission checking
 export const hasPermission = (userRole: UserRole | null, permission: string): boolean => {
   if (!userRole) return false;
-  return userRole.permissions.includes(permission) || userRole.permissions.includes('override_any_action');
+  return userRole.permissions.includes(permission);
 };
 
 export const requiresRole = (allowedRoles: UserRoleType[]) => {

@@ -1,415 +1,291 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { supabase } from '../../lib/supabase';
-import { PlusIcon, UserIcon, TrashIcon, PencilIcon } from '@heroicons/react/24/outline';
+import { 
+  fetchRestaurantStaff, 
+  addStaffMember,
+  removeStaffMember
+} from '../../api/users';
 import type { StaffWithUser, StaffRole } from '../../types/database';
+import { 
+  PlusIcon, 
+  XMarkIcon, 
+  UserIcon,
+  ClockIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon
+} from '@heroicons/react/24/outline';
 
-interface StaffManagementProps {
-  restaurantId: string;
-}
-
-export function StaffManagement({ restaurantId }: StaffManagementProps) {
-  const { user } = useAuth();
+export function StaffManagement() {
+  const { restaurant } = useAuth();
   const [staff, setStaff] = useState<StaffWithUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showInviteModal, setShowInviteModal] = useState(false);
-
-  useEffect(() => {
-    fetchStaff();
-  }, [restaurantId]);
+  const [error, setError] = useState<string | null>(null);
+  const [showInviteForm, setShowInviteForm] = useState(false);
 
   const fetchStaff = async () => {
+    if (!restaurant?.id) {
+      setLoading(false);
+      return;
+    }
+    
     try {
-      const { data, error } = await supabase
-        .from('restaurant_staff')
-        .select(`
-          *,
-          user:users(*)
-        `)
-        .eq('restaurant_id', restaurantId)
-        .eq('is_active', true)
-        .order('role');
-
-      if (error) throw error;
-      
-      // Handle staff with and without user accounts
-      const staffList = data?.map(member => ({
-        ...member,
-        user: member.user || {
-          id: '',
-          email: member.email || '',
-          first_name: member.email?.split('@')[0] || 'Invited',
-          last_name: 'User',
-          created_at: '',
-          updated_at: '',
-          is_active: false,
-          email_verified: false,
-          timezone: 'UTC'
-        }
-      })) || [];
-      
-      setStaff(staffList as StaffWithUser[]);
+      setError(null);
+      const staffData = await fetchRestaurantStaff(restaurant.id);
+      setStaff(staffData);
     } catch (error) {
       console.error('Error fetching staff:', error);
+      setError('Failed to load staff. Please refresh the page.');
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    fetchStaff();
+  }, [restaurant?.id]);
+
+  const handleInviteStaff = async (email: string, role: StaffRole) => {
+    if (!restaurant?.id) return;
+    
+    try {
+      setError(null);
+      await addStaffMember({
+        restaurantId: restaurant.id,
+        userEmail: email,
+        role,
+        permissions: [],
+        hourlyRate: 15.00
+      });
+      
+      setShowInviteForm(false);
+      fetchStaff(); // Refresh the list
+    } catch (error) {
+      console.error('Error inviting staff:', error);
+      setError('Failed to invite staff member. Please try again.');
+    }
+  };
+
   const handleRemoveStaff = async (staffId: string) => {
     if (!confirm('Are you sure you want to remove this staff member?')) return;
-
+    
     try {
-      const { error } = await supabase
-        .from('restaurant_staff')
-        .update({ is_active: false })
-        .eq('id', staffId);
-
-      if (error) throw error;
-      
-      setStaff(staff.filter(s => s.id !== staffId));
+      setError(null);
+      await removeStaffMember(staffId);
+      fetchStaff(); // Refresh the list
     } catch (error) {
       console.error('Error removing staff:', error);
-      alert('Failed to remove staff member');
+      setError('Failed to remove staff member. Please try again.');
     }
-  };
-
-  const getRoleColor = (role: StaffRole) => {
-    switch (role) {
-      case 'owner': return 'bg-purple-100 text-purple-800';
-      case 'manager': return 'bg-blue-100 text-blue-800';
-      case 'head_chef': return 'bg-red-100 text-red-800';
-      case 'chef': return 'bg-orange-100 text-orange-800';
-      case 'kitchen_staff': return 'bg-yellow-100 text-yellow-800';
-      case 'server': return 'bg-green-100 text-green-800';
-      case 'cashier': return 'bg-gray-100 text-gray-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const formatRole = (role: StaffRole) => {
-    return role.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
   if (loading) {
     return (
-      <div className="animate-pulse">
-        <div className="h-8 bg-gray-200 rounded w-1/4 mb-6"></div>
-        <div className="space-y-4">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="h-16 bg-gray-200 rounded"></div>
-          ))}
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="animate-pulse">
+          <div className="h-6 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-4 bg-gray-200 rounded"></div>
+            <div className="h-4 bg-gray-200 rounded w-5/6"></div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Staff Management</h2>
-        <button
-          onClick={() => setShowInviteModal(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-        >
-          <PlusIcon className="w-5 h-5" />
-          Invite Staff
-        </button>
+    <div className="bg-white rounded-lg shadow">
+      <div className="p-6 border-b border-gray-200">
+        <div className="flex justify-between items-center">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Staff Management</h3>
+            <p className="text-sm text-gray-600">Manage your restaurant staff and their roles</p>
+          </div>
+          <button
+            onClick={() => setShowInviteForm(true)}
+            className="btn-primary flex items-center"
+          >
+            <PlusIcon className="h-4 w-4 mr-2" />
+            Invite Staff
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">
-            Team Members ({staff.length})
-          </h3>
+      {error && (
+        <div className="p-4 bg-red-50 border-l-4 border-red-400">
+          <div className="flex">
+            <ExclamationTriangleIcon className="h-5 w-5 text-red-400" />
+            <div className="ml-3">
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
+          </div>
         </div>
-        
-        <div className="divide-y divide-gray-200">
-          {staff.map((member) => (
-            <div key={member.id} className="px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="flex-shrink-0">
-                  {member.user.avatar_url ? (
-                    <img
-                      className="h-10 w-10 rounded-full"
-                      src={member.user.avatar_url}
-                      alt={`${member.user.first_name} ${member.user.last_name}`}
-                    />
-                  ) : (
-                    <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                      <UserIcon className="h-6 w-6 text-gray-600" />
+      )}
+
+      <div className="p-6">
+        {staff.length === 0 ? (
+          <div className="text-center py-12">
+            <UserIcon className="mx-auto h-12 w-12 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">No staff members</h3>
+            <p className="mt-1 text-sm text-gray-500">Get started by inviting your first staff member.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {staff.map((member) => (
+              <div key={member.id} className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="bg-blue-100 rounded-full p-2">
+                      <UserIcon className="h-5 w-5 text-blue-600" />
                     </div>
-                  )}
-                </div>
-                
-                <div>
-                  <div className="text-sm font-medium text-gray-900">
-                    {member.user.first_name} {member.user.last_name}
-                    {!member.user.is_active && (
-                      <span className="ml-2 px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-full">
-                        Invitation Pending
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    {member.user.email}
-                  </div>
-                  {!member.user.is_active && (
-                    <div className="text-xs text-yellow-600 mt-1">
-                      Invitation sent - account not activated yet
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-900">
+                        {member.user?.first_name && member.user?.last_name 
+                          ? `${member.user.first_name} ${member.user.last_name}`
+                          : member.user?.email || 'Unknown User'
+                        }
+                      </h4>
+                      <p className="text-sm text-gray-500">{member.user?.email}</p>
+                      <div className="flex items-center mt-1 space-x-2">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          member.role === 'manager' 
+                            ? 'bg-purple-100 text-purple-800'
+                            : member.role === 'chef'
+                            ? 'bg-orange-100 text-orange-800'
+                            : 'bg-green-100 text-green-800'
+                        }`}>
+                          {member.role}
+                        </span>
+                        {member.user?.is_active ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <CheckCircleIcon className="h-3 w-3 mr-1" />
+                            Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                            <ClockIcon className="h-3 w-3 mr-1" />
+                            Invitation Pending
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-                
-                <span className={`px-2 py-1 text-xs font-medium rounded-full ${getRoleColor(member.role)}`}>
-                  {formatRole(member.role)}
-                </span>
-                
-                {member.hourly_rate && (
-                  <div className="text-sm text-gray-500">
-                    ${member.hourly_rate}/hr
                   </div>
-                )}
-              </div>
-              
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => {/* TODO: Edit staff modal */}}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <PencilIcon className="h-5 w-5" />
-                </button>
-                
-                {member.role !== 'owner' && (
                   <button
                     onClick={() => handleRemoveStaff(member.id)}
-                    className="text-red-400 hover:text-red-600"
+                    className="btn-secondary text-red-600 hover:bg-red-50"
                   >
-                    <TrashIcon className="h-5 w-5" />
+                    <XMarkIcon className="h-4 w-4" />
                   </button>
+                </div>
+                
+                {member.hourly_rate && (
+                  <div className="mt-3 text-sm text-gray-600">
+                    Hourly Rate: ${member.hourly_rate.toFixed(2)}
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
-          
-          {staff.length === 0 && (
-            <div className="px-6 py-8 text-center">
-              <UserIcon className="mx-auto h-12 w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No staff members</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Get started by inviting your first team member.
-              </p>
-              <div className="mt-6">
-                <button
-                  onClick={() => setShowInviteModal(true)}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 mx-auto"
-                >
-                  <PlusIcon className="w-5 h-5" />
-                  Invite Staff
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+            ))}
+          </div>
+        )}
 
-      {showInviteModal && (
-        <StaffInviteModal
-          restaurantId={restaurantId}
-          onClose={() => setShowInviteModal(false)}
-          onSuccess={() => {
-            setShowInviteModal(false);
-            fetchStaff();
-          }}
-        />
-      )}
+        {/* Invite Form Modal */}
+        {showInviteForm && (
+          <InviteStaffForm
+            onInvite={handleInviteStaff}
+            onCancel={() => setShowInviteForm(false)}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-interface StaffInviteModalProps {
-  restaurantId: string;
-  onClose: () => void;
-  onSuccess: () => void;
+interface InviteStaffFormProps {
+  onInvite: (email: string, role: StaffRole) => void;
+  onCancel: () => void;
 }
 
-function StaffInviteModal({ restaurantId, onClose, onSuccess }: StaffInviteModalProps) {
-  const [formData, setFormData] = useState({
-    email: '',
-    role: 'kitchen_staff' as StaffRole,
-    hourlyRate: '',
-    permissions: [] as string[]
-  });
+function InviteStaffForm({ onInvite, onCancel }: InviteStaffFormProps) {
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<StaffRole>('server');
   const [loading, setLoading] = useState(false);
-
-  const roles: { value: StaffRole; label: string; description: string }[] = [
-    { value: 'manager', label: 'Manager', description: 'Full restaurant management access' },
-    { value: 'head_chef', label: 'Head Chef', description: 'Kitchen management and menu control' },
-    { value: 'chef', label: 'Chef', description: 'Order preparation and kitchen operations' },
-    { value: 'kitchen_staff', label: 'Kitchen Staff', description: 'Basic kitchen operations' },
-    { value: 'server', label: 'Server', description: 'Table service and customer interaction' },
-    { value: 'cashier', label: 'Cashier', description: 'Point of sale and payment processing' }
-  ];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email.trim()) return;
+    
     setLoading(true);
-
     try {
-      // Simple approach: Create a placeholder user first, then create staff record
-      
-      // Check if user already exists
-      const { data: existingUser } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', formData.email)
-        .single();
-
-      let userId: string;
-
-      if (existingUser) {
-        userId = existingUser.id;
-        
-        // Check if already staff at this restaurant
-        const { data: existingStaff } = await supabase
-          .from('restaurant_staff')
-          .select('id')
-          .eq('restaurant_id', restaurantId)
-          .eq('user_id', userId)
-          .eq('is_active', true)
-          .single();
-
-        if (existingStaff) {
-          alert('This person is already staff at your restaurant.');
-          setLoading(false);
-          return;
-        }
-      } else {
-        // Create placeholder user record for invitation
-        const { data: newUser, error: userError } = await supabase
-          .from('users')
-          .insert({
-            email: formData.email,
-            first_name: formData.email.split('@')[0] || 'Staff',
-            last_name: 'Member',
-            is_active: false, // Mark as inactive until they sign up
-            email_verified: false
-          })
-          .select('id')
-          .single();
-
-        if (userError) throw userError;
-        userId = newUser.id;
-      }
-
-      // Create staff record
-      const { error: staffError } = await supabase
-        .from('restaurant_staff')
-        .insert({
-          restaurant_id: restaurantId,
-          user_id: userId,
-          role: formData.role,
-          permissions: formData.permissions,
-          hourly_rate: formData.hourlyRate ? parseFloat(formData.hourlyRate) : null,
-          is_active: true,
-          hire_date: new Date().toISOString().split('T')[0]
-        });
-
-      if (staffError) throw staffError;
-
-      alert(`✅ Staff invitation created! 
-
-Send this info to ${formData.email}:
-
-"You've been invited to join our restaurant team as a ${formData.role}!
-
-1. Go to TableDirect and create an account
-2. Use email: ${formData.email}
-3. You'll have immediate access to the system"
-
-They can now sign up and access the dashboard!`);
-      
-      onSuccess();
-    } catch (error) {
-      console.error('Error inviting staff:', error);
-      alert(`Failed to invite staff member: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      await onInvite(email.trim(), role);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-      <div className="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
-        <div className="mt-3">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">Invite Staff Member</h3>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Invite Staff Member</h3>
           
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email Address
-              </label>
-              <input
-                type="email"
-                required
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="staff@example.com"
-              />
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="input-field w-full"
+                  placeholder="staff@example.com"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Role
+                </label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as StaffRole)}
+                  className="input-field w-full"
+                >
+                  <option value="server">Server</option>
+                  <option value="chef">Chef</option>
+                  <option value="manager">Manager</option>
+                </select>
+              </div>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Role
-              </label>
-              <select
-                value={formData.role}
-                onChange={(e) => setFormData({ ...formData, role: e.target.value as StaffRole })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {roles.map((role) => (
-                  <option key={role.value} value={role.value}>
-                    {role.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                {roles.find(r => r.value === formData.role)?.description}
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Hourly Rate (Optional)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={formData.hourlyRate}
-                onChange={(e) => setFormData({ ...formData, hourlyRate: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="15.00"
-              />
-            </div>
-
-            <div className="flex gap-3 pt-4">
+            
+            <div className="flex justify-end space-x-3 mt-6">
               <button
                 type="button"
-                onClick={onClose}
-                className="flex-1 px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                onClick={onCancel}
+                className="btn-secondary"
+                disabled={loading}
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                disabled={loading}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary"
+                disabled={loading || !email.trim()}
               >
-                {loading ? 'Sending...' : 'Send Invite'}
+                {loading ? 'Inviting...' : 'Send Invitation'}
               </button>
             </div>
           </form>
+          
+          <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+            <h4 className="text-sm font-medium text-blue-900 mb-2">How it works:</h4>
+            <ul className="text-xs text-blue-800 space-y-1">
+              <li>• We'll create a placeholder account for this email</li>
+              <li>• When they sign up with this email, they'll automatically be linked</li>
+              <li>• They'll have access to your restaurant dashboard and kitchen</li>
+            </ul>
+          </div>
         </div>
       </div>
     </div>
